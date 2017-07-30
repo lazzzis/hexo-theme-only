@@ -19,10 +19,16 @@ Promise.all([
   store.dispatch('fetchThemeCfg')
 ]).then(() => {
   store.state.themeCfg.Splash.forEach((item) => {
+    if (item.type === 'permalink') {
+      return
+    }
     item.link =
       window.root + (item.link.startsWith('/') ? item.link.slice(1) : item.link)
   })
   store.state.themeCfg.Drawer.forEach((item) => {
+    if (item.type === 'permalink') {
+      return
+    }
     item.link =
       window.root + (item.link.startsWith('/') ? item.link.slice(1) : item.link)
   })
