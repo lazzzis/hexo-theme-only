@@ -6,6 +6,7 @@ import router from './router'
 import store from './store'
 import moment from 'moment'
 import Page from '@/views/Page'
+import NotFound from '@/views/NotFound'
 
 Vue.config.productionTip = false
 
@@ -43,6 +44,11 @@ Promise.all([
         title: item.title
       }
     })))
+  router.addRoutes([{
+    name: 'NotFound',
+    path: window.root + '*',
+    component: NotFound
+  }])
   /* eslint-disable no-new */
   new Vue({
     el: '#app',
