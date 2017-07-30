@@ -37,7 +37,7 @@ title 的值可以随意，它就是最后显示在博客 Splash 或 Drawer 的�
 
 一般指外链，比如链接到你的推特帐号，例如:
 
-```yaml
+```yml
 -
     title: Twitter
     type: permalink
@@ -61,3 +61,7 @@ page 指你可以自定义的其它页面，要想使用 page 不需在 source �
 例如像单独增加一个 `/about` 路由的页面，那么在 hexo 目中的 source 下建立一个 `About.md`，这个 markdown 文件里的 title 必须设置为 `About`，即文件中的 title 必须与配置中的 title 对应。
 
 link 随意，一般不与之前冲突的就行。
+
+## disqus_shortname
+
+评论用的 `disqus` id

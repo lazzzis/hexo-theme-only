@@ -13,7 +13,7 @@
      </span>
     <hr class="splitline">
     <only-disqus
-      v-if="article.comments && config"
+      v-if="article.comments && config && config.disqus_shortname"
       :config="config"
     ></only-disqus>
   </div>
