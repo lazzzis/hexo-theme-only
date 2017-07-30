@@ -18,10 +18,10 @@ Splash:
         type: permalink
         link: /atom.xml
         _blank: true
-    -
-        title: About
-        type: page
-        link: /about
+    # -
+    #     title: About
+    #     type: page
+    #     link: /about
 
 Drawer:
     -
@@ -32,13 +32,13 @@ Drawer:
         title: Tags
         type: sitelink
         link: /tags
-    -
-        title: Link
-        type: page
-        link: /links
-    -
-        title: About
-        type: page
-        link: /about
+    # -
+    #     title: Link
+    #     type: page
+    #     link: /links
+    # -
+    #     title: About
+    #     type: page
+    #     link: /about
 
-disqus_shortname: 'lazzzis'
+# disqus_shortname: lazzzis
