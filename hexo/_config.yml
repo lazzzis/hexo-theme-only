@@ -1,0 +1,44 @@
+Splash:
+    -
+        title: Blogs
+        type: sitelink
+        link: /posts
+    -
+        title: Twitter
+        type: permalink
+        link: https://twitter.com/lazzzis
+        _blank: true
+    -
+        title: Github
+        type: permalink
+        link: https://github.com/lazzzis
+        _blank: true
+    -
+        title: Rss
+        type: permalink
+        link: /atom.xml
+        _blank: true
+    -
+        title: About
+        type: page
+        link: /about
+
+Drawer:
+    -
+        title: Blog
+        type: sitelink
+        link: /posts
+    -
+        title: Tags
+        type: sitelink
+        link: /tags
+    -
+        title: Link
+        type: page
+        link: /links
+    -
+        title: About
+        type: page
+        link: /about
+
+disqus_shortname: 'lazzzis'
