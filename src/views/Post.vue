@@ -24,6 +24,7 @@ import { mapGetters, mapActions } from 'vuex'
 import ArticleItem from '@/components/ArticleItem'
 import Container from '@/components/Container'
 import Loading from '@/components/Loading'
+import { disqusUrl } from '@/helper'
 
 export default {
   props: [ 'slug' ],
@@ -56,9 +57,9 @@ export default {
     config () {
       return {
         shortname: this.themeCfg.disqus_shortname,
-        url: window.location.href,
+        url: disqusUrl(),
         title: document.title,
-        identifier: window.location.href
+        identifier: disqusUrl()
       }
     }
   },

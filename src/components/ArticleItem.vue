@@ -13,20 +13,24 @@
      </span>
     <hr class="splitline">
     <only-disqus
-      v-if="article.comments && config && config.disqus_shortname"
+      v-if="article.comments && config && themeCfg.disqus_shortname"
       :config="config"
     ></only-disqus>
   </div>
 </template>
 
 <script>
+import { mapGetters } from 'vuex'
 import Disqus from '@/components/Disqus.vue'
 
 export default {
   components: {
     'only-disqus': Disqus
   },
-  props: [ 'article', 'config' ]
+  props: [ 'article', 'config' ],
+  computed: {
+    ...mapGetters([ 'themeCfg' ])
+  }
 }
 </script>
 

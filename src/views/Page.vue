@@ -25,6 +25,8 @@ import { mapGetters, mapActions } from 'vuex'
 import ArticleItem from '@/components/ArticleItem'
 import Container from '@/components/Container'
 import Loading from '@/components/Loading'
+import { disqusUrl } from '@/helper'
+import Vue from 'vue'
 
 export default {
   props: [ 'title' ],
@@ -51,9 +53,9 @@ export default {
     config () {
       return {
         shortname: this.themeCfg.disqus_shortname,
-        url: window.location.href,
+        url: disqusUrl(),
         title: document.title,
-        identifier: window.location.href
+        identifier: disqusUrl()
       }
     }
   },
@@ -76,15 +78,19 @@ export default {
       this.refresh(to)
         .then(() => {
           this.loading = false
+        }).then(() => {
+          Vue.nextTick(() => {
+            window.DISQUS.reset({
+              reload: true,
+              config () {
+                this.page.identifier = disqusUrl()
+                this.page.url = disqusUrl()
+                this.page.title = document.title
+                console.log(this.page.identifier, this.page.url)
+              }
+            })
+          })
         })
-      window.DISQUS.reset({
-        reload: true,
-        config () {
-          this.page.identifier = window.href
-          this.page.url = window.location.href
-          this.page.title = document.title
-        }
-      })
     }
   }
 }
