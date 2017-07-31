@@ -23,4 +23,6 @@ npm i lodash.pick highlight.js --save
 
 前往 [https://github.com/lazzzis/hexo-theme-only/releases](https://github.com/lazzzis/hexo-theme-only/releases) 下载最新版主题，解压到 hexo 的 themes 目录中
 
+记的把 `_config.yml.example` 改为 `_config.yml`
+
 将本主题设置为 hexo 默认主题。（在站点配置文件里将默认主题字段设置为与存放主题的文件夹相同的值）

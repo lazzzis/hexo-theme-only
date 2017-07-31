@@ -11,3 +11,4 @@
 1. [安装](./setup.md)
 2. [配置](./setting.md)
 3. [评论迁移](./migrate_comments.md)
+4. [faq](./faq.md)
