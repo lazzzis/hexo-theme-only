@@ -4,6 +4,10 @@
 
 比如以前我一篇文章的地址是 `https://lazzzis.github.io/2017/12/25/xmas`，但在这个主题的限制下，这篇文章对应的链接变成了 `https://lazzzis.github.io/post/xmas`。如果你用 disqus 评论的系统的话，这意味着你必须迁移评论。
 
+实现说一点:
+
+在 disqus 中，`https://lazzzis.github.io/about` 与 `https://lazzzis.github.io/about/` 是不同的，因此我为了统一，所有请求 disqus 评论是都用的是以 '/' 结尾的 URL，即后者。即时 导航栏
+
 如果你不知道怎么迁移，可以按照如下步骤:
 
 登录 [disqus](https://disqus.com)，选择右上角的 Admin
