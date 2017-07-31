@@ -7,6 +7,28 @@ import store from './store'
 import moment from 'moment'
 import Page from '@/views/Page'
 import NotFound from '@/views/NotFound'
+import axios from 'axios'
+import nprogress from 'nprogress'
+
+import FastClick from 'fastclick'
+
+FastClick.attach(window.document.body)
+
+nprogress.configure({ speed: 400 })
+
+axios.interceptors.request.use(function (config) {
+  nprogress.start()
+  return config
+}, function (error) {
+  return Promise.reject(error)
+})
+
+axios.interceptors.response.use(function (response) {
+  nprogress.done()
+  return response
+}, function (error) {
+  return Promise.reject(error)
+})
 
 Vue.config.productionTip = false
 
