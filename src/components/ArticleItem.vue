@@ -1,5 +1,5 @@
 <template lang="html">
-  <div class="article animated slideInLeft">
+  <div class="article">
     <h1 class="title">{{ article.title }}</h1>
     <hr class="splitline">
     <article

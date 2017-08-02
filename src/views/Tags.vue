@@ -22,6 +22,8 @@
         v-for="post in posts"
         :key="post.title"
         :post="post"
+        class="animated"
+        :class="themeCfg.animated && themeCfg.animated.tags"
       ></only-post>
     </div>
   </only-container>
@@ -76,7 +78,7 @@ export default {
     })
   },
   computed: {
-    ...mapGetters([ 'tags', 'posts', 'siteCfg' ])
+    ...mapGetters([ 'tags', 'posts', 'siteCfg', 'themeCfg' ])
   },
   methods: {
     ...mapActions([ 'fetchTags', 'fetchPostsByTag' ]),

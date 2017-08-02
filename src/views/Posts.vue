@@ -1,6 +1,12 @@
 <template lang="html">
     <only-container>
-      <only-post v-for="post in posts" :post="post" :key="post.title"></only-post>
+      <only-post
+        v-for="post in posts"
+        :post="post"
+        :key="post.title"
+        class="animated"
+        :class="themeCfg.animated && themeCfg.animated.posts"
+        ></only-post>
     </only-container>
 </template>
 
@@ -21,7 +27,7 @@ export default {
     'only-post': PostItem
   },
   computed: {
-    ...mapGetters([ 'posts', 'siteCfg' ])
+    ...mapGetters([ 'posts', 'siteCfg', 'themeCfg' ])
   },
   methods: {
     ...mapActions([ 'fetchPosts' ])

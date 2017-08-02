@@ -6,6 +6,8 @@
         v-if="!notExisted && post"
         :article="post"
         :config="config"
+        class="animated"
+        :class="themeCfg.animated && themeCfg.animated.post"
       >
       </only-article>
       <div v-if="notExisted">

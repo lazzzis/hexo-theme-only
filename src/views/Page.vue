@@ -7,6 +7,8 @@
         v-if="!notExisted"
         :article="page"
         :config="config"
+        class="animated"
+        :class="themeCfg.animated && themeCfg.animated.page"
       >
       </only-article>
       <div v-else>

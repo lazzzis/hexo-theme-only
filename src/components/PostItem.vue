@@ -1,5 +1,5 @@
 <template lang="html">
-  <section class="blog-item animated bounceInUp">
+  <section class="blog-item">
     <router-link
       tag="h2"
       class="title"
