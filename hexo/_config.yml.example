@@ -42,3 +42,9 @@ Drawer:
     #     link: /about
 
 # disqus_shortname: lazzzis
+
+animated:
+    posts: bounceInLeft
+    post: slideInLeft
+    page: slideInLeft
+    tags: bounceInUp
