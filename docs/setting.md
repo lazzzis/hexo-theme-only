@@ -14,7 +14,7 @@ Drawer 对应的是侧边导航栏的一批链接
 
 sitelink 的链接是本主题已经使用了，分别是
 
-- `/' 首页
+- `/` 首页
 - `/posts` 文章列表
 - `/post/:title` 标题为 title 的文章
 - `/tags` 标签列表
@@ -49,7 +49,7 @@ title 的值可以随意，它就是最后显示在博客 Splash 或 Drawer 的�
 
 #### page
 
-page 指你可以自定义的其它页面，要想使用 page 不需在 source 目录下建立一个新的 markdown 文件
+page 指你可以自定义的其它页面，要想使用 page 必须在 source 目录下建立一个新的 markdown 文件
 
 ```yml
 -
@@ -64,4 +64,4 @@ link 随意，一般不与之前冲突的就行。
 
 ## disqus_shortname
 
-评论用的 `disqus` id
+评论用的 `disqus` id，如果不设置，就不显示评论
