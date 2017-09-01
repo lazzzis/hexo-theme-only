@@ -65,3 +65,7 @@ link 随意，一般不与之前冲突的就行。
 ## disqus_shortname
 
 评论用的 `disqus` id，如果不设置，就不显示评论
+
+## favicon
+
+将 `favicon.ico` 放置于 `source` 文件夹下即可
