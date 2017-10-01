@@ -81,7 +81,7 @@ const actions = {
     return axios.get('api/posts.json')
       .then(({data}) => {
         commit('updatePosts', {
-          posts: data
+          posts: data.sort((x, y) => new Date(y.date).getTime() - new Date(x.date).getTime())
         })
       })
   },
@@ -113,7 +113,7 @@ const actions = {
     return axios.get(`api/tags/${tag}.json`)
       .then(({data}) => {
         commit('updatePosts', {
-          posts: data.postlist
+          posts: data.postlist.sort((x, y) => new Date(y.date).getTime() - new Date(x.date).getTime())
         })
       })
   }
