@@ -6,12 +6,12 @@ Splash:
     -
         title: Twitter
         type: permalink
-        link: https://twitter.com/lazzzis
+        link: https://twitter.com #/lazzzis
         _blank: true
     -
         title: Github
         type: permalink
-        link: https://github.com/lazzzis
+        link: https://github.com #/lazzzis
         _blank: true
     -
         title: Rss
@@ -41,7 +41,8 @@ Drawer:
     #     type: page
     #     link: /about
 
-# disqus_shortname: lazzzis
+# disqus_shortname: demo
+# livere_uid: demo
 
 animated:
     posts: bounceInLeft

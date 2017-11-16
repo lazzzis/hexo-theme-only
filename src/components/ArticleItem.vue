@@ -6,7 +6,6 @@
       class="content"
       v-html="article.content"
       >
-
     </article>
     <span class="time"> {{ article.date | timePretty }}
       / Updated on {{ article.updated | timePretty }}
@@ -16,16 +15,22 @@
       v-if="article.comments && config && themeCfg.disqus_shortname"
       :config="config"
     ></only-disqus>
+    <only-livere
+      v-else-if="article.comments && config && themeCfg.livere_uid"
+      :config="config"
+    ></only-livere>
   </div>
 </template>
 
 <script>
 import { mapGetters } from 'vuex'
 import Disqus from '@/components/Disqus.vue'
+import Livere from '@/components/Livere.vue'
 
 export default {
   components: {
-    'only-disqus': Disqus
+    'only-disqus': Disqus,
+    'only-livere': Livere
   },
   props: [ 'article', 'config' ],
   computed: {
