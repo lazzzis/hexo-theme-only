@@ -66,6 +66,11 @@ link 随意，一般不与之前冲突的就行。
 
 评论用的 `disqus` id，如果不设置，就不显示评论
 
+## livere_uid
+
+**此功能当前处于 Beta 状态**
+评论用的 `livere` (来必力) uid，如果不设置，就不显示评论。这里的 uid 指管理页面 -> 代码管理 -> 一般网站 代码中的 data-uid
+
 ## favicon
 
 将 `favicon.ico` 放置于 `source` 文件夹下即可
