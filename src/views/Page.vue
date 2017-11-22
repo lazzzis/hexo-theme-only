@@ -53,12 +53,12 @@ export default {
   computed: {
     ...mapGetters([ 'page', 'themeCfg', 'siteCfg' ]),
     config () {
-      return {
+      return this.themeCfg.disqus_shortname ? {
         shortname: this.themeCfg.disqus_shortname,
         url: disqusUrl(),
         title: document.title,
         identifier: disqusUrl()
-      }
+      } : { livere_uid: this.themeCfg.livere_uid }
     }
   },
   methods: {
