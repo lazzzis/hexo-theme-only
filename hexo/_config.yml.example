@@ -45,7 +45,7 @@ Drawer:
 # livere_uid: demo
 
 animated:
-    posts: bounceInLeft
+    posts: slideInLeft
     post: slideInLeft
     page: slideInLeft
     tags: bounceInUp

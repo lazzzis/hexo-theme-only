@@ -38,7 +38,7 @@ export default {
     style () {
       if (process.env.NODE_ENV === 'production') {
         return {
-          'background-image': window.root + 'img/background.jpg'
+          'backgroundImage': `url(${window.root}img/background.jpg)`
         }
       }
     }
