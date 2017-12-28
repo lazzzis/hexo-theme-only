@@ -1,10 +1,8 @@
 import Vue from 'vue'
 import Vuex from 'vuex'
-import axios from 'axios'
+import http from '@/api'
 
 Vue.use(Vuex)
-
-axios.defaults.baseURL = window.root
 
 const state = {
   themeCfg: null,
@@ -66,19 +64,19 @@ const mutations = {
 
 const actions = {
   fetchSiteCfg ({commit}) {
-    return axios.get('api/site.json')
+    return http.get('api/site.json')
       .then(({data}) => {
         commit('updateSiteCfg', data)
       })
   },
   fetchThemeCfg ({commit}) {
-    return axios.get('api/theme.json')
+    return http.get('api/theme.json')
       .then(({data}) => {
         commit('updateThemeCfg', data)
       })
   },
   fetchPosts ({commit}) {
-    return axios.get('api/posts.json')
+    return http.get('api/posts.json')
       .then(({data}) => {
         commit('updatePosts', {
           posts: data.sort((x, y) => new Date(y.date).getTime() - new Date(x.date).getTime())
@@ -86,7 +84,7 @@ const actions = {
       })
   },
   fetchPost ({commit}, {slug}) {
-    return axios.get(`api/articles/${slug}.json`)
+    return http.get(`api/articles/${slug}.json`)
     .then(({data}) => {
       commit('updatePost', {
         post: data
@@ -94,7 +92,7 @@ const actions = {
     })
   },
   fetchPage ({commit}, {title}) {
-    return axios.get(`api/page/${title}.json`)
+    return http.get(`api/page/${title}.json`)
       .then(({data}) => {
         commit('updatePage', {
           page: data
@@ -102,7 +100,7 @@ const actions = {
       })
   },
   fetchTags ({commit}) {
-    return axios.get(`api/tags.json`)
+    return http.get(`api/tags.json`)
       .then(({data}) => {
         commit('updateTags', {
           tags: data
@@ -110,7 +108,7 @@ const actions = {
       })
   },
   fetchPostsByTag ({commit}, {tag}) {
-    return axios.get(`api/tags/${tag}.json`)
+    return http.get(`api/tags/${tag}.json`)
       .then(({data}) => {
         commit('updatePosts', {
           posts: data.postlist.sort((x, y) => new Date(y.date).getTime() - new Date(x.date).getTime())
