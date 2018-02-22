@@ -1,7 +1,7 @@
 var fs = require('hexo-fs')
 var path = require('path')
 
-module.exports = function (site) {
+module.exports = function (config, themeConfig, site) {
   var res = []
   var generator = {}
   var postNameList = site.posts.sort('-date').filter(function (post) {
@@ -40,6 +40,38 @@ module.exports = function (site) {
     layout: 'index',
     data: {}
   })
+
+  res.push({
+    path: '/tags/index.html',
+    layout: 'index',
+    data: {}
+  })
+
+  try {
+    themeConfig
+      .Drawer
+      .filter((item) => item.type === 'page')
+      .forEach((item) => res.push({
+        path: item.link + '/index.html',
+        layout: 'index',
+        data: {}
+      }))
+  } catch (error) {
+    // pass
+  }
+
+  try {
+    themeConfig
+      .Splash
+      .filter((item) => item.type === 'page')
+      .forEach((item) => res.push({
+        path: item.link + '/index.html',
+        layout: 'index',
+        data: {}
+      }))
+  } catch (error) {
+    // pass
+  }
 
   return res
 }

@@ -8,7 +8,8 @@ hexo.extend.generator.register('restful', function (site) {
 })
 
 hexo.extend.generator.register('router-add-one', function (site) {
-  return router(site)
+  let {config, theme: {config: themeConfig}} = hexo
+  return router(config, themeConfig, site)
 })
 
 hexo.extend.filter.register('after_post_render', highlight_code)
