@@ -9,3 +9,13 @@
 [文档](./docs/README.md)
 
 如果有疑问或建议，请尽管发起 ISSUE
+
+---
+
+A theme powered by Vue, partly inspired by [hexo-theme-one](https://github.com/EYHN/hexo-theme-one).
+
+[Preview](https://lazzzis.github.io)
+
+[Documents](./docs/english/README.md)
+
+If you have any question or advice, feel free to open an ISSUE

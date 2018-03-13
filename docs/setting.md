@@ -58,7 +58,7 @@ page 指你可以自定义的其它页面，要想使用 page 必须在 source �
     link: /about
 ```
 
-例如像单独增加一个 `/about` 路由的页面，那么在 hexo 目中的 source 下建立一个 `About.md`，这个 markdown 文件里的 title 必须设置为 `About`，即文件中的 title 必须与配置中的 title 对应。
+例如像单独增加一个 `/about` 路由的页面，那么在 hexo 目录中的 source 下建立一个 `About.md`，这个 markdown 文件里的 title 必须设置为 `About`，即文件中的 title 必须与配置中的 title 对应。
 
 link 随意，一般不与之前冲突的就行。
 
@@ -73,4 +73,4 @@ link 随意，一般不与之前冲突的就行。
 
 ## favicon
 
-将 `favicon.ico` 放置于 `source` 文件夹下即可
+将 `favicon.ico` 放置于主题的 `source` 文件夹下即可
