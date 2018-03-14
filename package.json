@@ -9,7 +9,7 @@
     "start": "node build/dev-server.js",
     "build": "cross-env NODE_ENV=production node build/build.js",
     "lint": "eslint --ext .js,.vue src",
-    "dev:server": "http-server --cors -p 3300 ./api"
+    "dev:server": "http-server --cors -p 3300 -c-1 ./api"
   },
   "dependencies": {
     "axios": "^0.16.2",
