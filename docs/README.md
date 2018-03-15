@@ -13,3 +13,4 @@
 3. [评论迁移](./migrate_comments.md)
 4. [动画效果](./animated.md)
 5. [faq](./faq.md)
+6. [开发](./dev.md)
