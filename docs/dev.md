@@ -18,7 +18,7 @@
 
 ## 基本思路
 
-1. 通过 `hexo/scripts` 里的代码，可以生成 `api` 文件夹下的所有 `json` 文件。
+1. 通过 `hexo/scripts` 里的代码(这部分来自于 `hexo-theme-one`)，可以生成 `api` 文件夹下的所有 `json` 文件。
 2. 前端向后端请求相应的 `json` 文件并更新
 
 ## site.json 与 theme.json
