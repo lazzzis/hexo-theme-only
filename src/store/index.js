@@ -11,7 +11,8 @@ const state = {
   page: {},
   post: null,
   posts: [],
-  tags: null
+  tags: null,
+  status: 200 // http status code
 }
 
 const getters = {
@@ -35,6 +36,9 @@ const getters = {
   },
   siteCfg (state) {
     return state.siteCfg
+  },
+  status (state) {
+    return state.status
   }
 }
 
@@ -59,6 +63,9 @@ const mutations = {
   },
   updateSiteCfg (state, siteCfg) {
     state.siteCfg = siteCfg
+  },
+  updateStatus (state, status) {
+    state.status = status
   }
 }
 

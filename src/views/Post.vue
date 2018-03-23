@@ -10,13 +10,7 @@
         :class="themeCfg.animated && themeCfg.animated.post"
       >
       </only-article>
-      <div v-if="notExisted">
-        <h2>这篇文章 。。 居然不存在</h2>
-        <p>要不。。看看<router-link
-            :to="{name: 'Posts'}"
-          >其它文章</router-link></p>
-        <img src="https://as.bitinn.net/upload/ciodybere00a528s5yot7bffd.1200.jpg" alt="">
-      </div>
+      <h1 v-else>This Post is Not Existed</h1>
     </only-loading>
   </only-container>
 </template>
@@ -39,6 +33,7 @@ export default {
       .catch((err) => {
         if (err.response && err.response.status === 404) {
           this.notExisted = true
+          this.$store.commit('updateStatus', 404)
         }
         this.loading = false
       })

@@ -72,6 +72,7 @@ Promise.all([
         title: item.title
       }
     })))
+
   router.addRoutes([{
     name: 'NotFound',
     path: window.root + '*',

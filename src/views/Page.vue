@@ -11,13 +11,6 @@
         :class="themeCfg.animated && themeCfg.animated.page"
       >
       </only-article>
-      <div v-else>
-        <h2>这篇文章 。。 居然不存在</h2>
-        <p>要不。。看看<router-link
-            :to="{name: 'Posts'}"
-          >其它文章</router-link></p>
-        <img src="https://as.bitinn.net/upload/ciodybere00a528s5yot7bffd.1200.jpg" alt="">
-      </div>
     </only-loading>
   </only-container>
 </template>

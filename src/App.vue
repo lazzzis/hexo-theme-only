@@ -2,18 +2,24 @@
   <div id="app">
     <!-- display it only after config is fetched -->
     <only-nav v-if="$route.name !== 'Splash'"></only-nav>
-    <router-view
-    ></router-view>
+    <router-view v-if="status !== 404"></router-view>
+    <only-not-found v-else />
   </div>
 </template>
 
 <script>
 import Nav from '@/components/Nav.vue'
+import NotFound from '@/views/NotFound'
+import { mapGetters } from 'vuex'
 
 export default {
   name: 'app',
   components: {
-    'only-nav': Nav
+    'only-nav': Nav,
+    'only-not-found': NotFound
+  },
+  computed: {
+    ...mapGetters([ 'status' ])
   }
 }
 </script>

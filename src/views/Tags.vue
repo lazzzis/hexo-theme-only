@@ -1,10 +1,6 @@
 <template lang="html">
   <only-container>
-    <div v-if="noTags">
-      <h2>那个 ... 那个 ... 好像什么标签也没有</h2>
-      <img src="https://as.bitinn.net/upload/ciruktvs4001u085nt3tqw7vz.1200.jpg">
-    </div>
-    <div v-else-if="notExisted">
+    <div v-if="notExisted">
       <h2>嗯，这个标签并不存在</h2>
       <img src="https://as.bitinn.net/upload/cj2l8o36f00ofbo5nj7spml66.1200.jpg">
     </div>
@@ -62,6 +58,7 @@ export default {
         }).catch((err) => {
           if (err.response && err.response.status === 404) {
             this.noTags = true
+            this.$store.commit('updateStatus', 404)
           }
         })
     }
@@ -72,6 +69,7 @@ export default {
     }).catch((err) => {
       if (err.response && err.response.status === 404) {
         this.notExisted = true
+        this.$store.commit('updateStatus', 404)
       }
     }).then(() => {
       document.title = `${this.tag} | ${this.siteCfg.title}`
