@@ -12,5 +12,6 @@
 2. [配置](./setting.md)
 3. [评论迁移](./migrate_comments.md)
 4. [动画效果](./animated.md)
-5. [faq](./faq.md)
-6. [开发](./dev.md)
+5. [自定义 404 页面](./custumize_404.md)
+6. [faq](./faq.md)
+7. [开发](./dev.md)
