@@ -180,7 +180,10 @@ module.exports = function (cfg, themecfg, site) {
   } else {
     apiData.push({
       path: 'api/posts.json',
-      data: JSON.stringify(postlist)
+      data: JSON.stringify(postlist.filter(function (post) {
+        console.log(post.slug, themecfg.Page404)
+        return post.slug !== themecfg.Page404
+      }))
     })
   }
 

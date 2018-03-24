@@ -5,7 +5,7 @@ module.exports = function (config, themeConfig, site) {
   var res = []
   var generator = {}
   var postNameList = site.posts.sort('-date').filter(function (post) {
-    return post.published
+    return post.published && post.slug !== themeConfig.Page404
   }).map((value) => {
     return value.slug
   })
