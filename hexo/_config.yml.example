@@ -1,3 +1,5 @@
+# read documentations for more detail
+
 Splash:
     -
         title: Blogs
@@ -49,3 +51,6 @@ animated:
     post: slideInLeft
     page: slideInLeft
     tags: bounceInUp
+
+# customize 404 page
+# Page404: not-found
