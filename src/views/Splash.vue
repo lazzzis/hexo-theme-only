@@ -58,6 +58,7 @@ export default {
     .body
       background-image: url(../assets/background.jpg)
       background-size: cover
+      background-position: center
       width: 100%
       height: 100%
     .content
