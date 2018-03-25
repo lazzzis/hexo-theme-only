@@ -1,4 +1,4 @@
-# Custumize 404 Page
+# Customize 404 Page
 
 Create a new post, which you can name anything, like `404`, `not-found`. An example:
 
