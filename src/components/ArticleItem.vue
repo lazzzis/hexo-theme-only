@@ -24,8 +24,9 @@
 
 <script>
 import { mapGetters } from 'vuex'
-import Disqus from '@/components/Disqus.vue'
-import Livere from '@/components/Livere.vue'
+import mediumZoom from 'medium-zoom'
+import Disqus from '@/components/Disqus'
+import Livere from '@/components/Livere'
 
 export default {
   components: {
@@ -35,6 +36,11 @@ export default {
   props: [ 'article', 'config' ],
   computed: {
     ...mapGetters([ 'themeCfg' ])
+  },
+  mounted () {
+    mediumZoom('article.content img', {
+      background: 'rgba(255, 255, 255, 0.7)'
+    })
   }
 }
 </script>
