@@ -5,8 +5,8 @@ var webpack = require('webpack')
 module.exports = {
   build: {
     env: require('./prod.env'),
-    index: path.resolve(__dirname, '../dist/index.html'),
-    assetsRoot: path.resolve(__dirname, '../dist'),
+    index: path.resolve(__dirname, '../hexo/source/index.html'),
+    assetsRoot: path.resolve(__dirname, '../hexo/source'),
     assetsSubDirectory: '',
     assetsPublicPath: '/',
     productionSourceMap: true,
