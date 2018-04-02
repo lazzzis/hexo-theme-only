@@ -1,0 +1,1786 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>lazzzis</title>
+  
+  <link href="/hexo-theme-only/atom.xml" rel="self"/>
+  
+  <link href="https://lazzzis.github.io/hexo-theme-only/"/>
+  <updated>2017-07-30T05:48:51.000Z</updated>
+  <id>https://lazzzis.github.io/hexo-theme-only/</id>
+  
+  <author>
+    <name>John Doe</name>
+    
+  </author>
+  
+  <generator uri="http://hexo.io/">Hexo</generator>
+  
+  <entry>
+    <title>node-thunkify 的实现及源码阅读</title>
+    <link href="https://lazzzis.github.io/hexo-theme-only/2017/06/29/source-code-of-thunkify/"/>
+    <id>https://lazzzis.github.io/hexo-theme-only/2017/06/29/source-code-of-thunkify/</id>
+    <published>2017-06-29T07:52:32.000Z</published>
+    <updated>2017-07-30T05:48:51.000Z</updated>
+    
+    <content type="html"><![CDATA[<p>最近看了些项目的源码，其中就包括 <code>thunkify</code>。虽然 <code>thunkify</code> 代码简单，很快就读完了，不过看看项目的测试文件和提交历史，也还是能看出很多事物的。这次阅读的代码是当前最新版本，commit 编号 <a href="https://github.com/tj/node-thunkify/tree/0bd83e29df1bb0653230724f072cff96b0ab684e" target="_blank" rel="external">0bd83e</a>。</p>
+<h1 id="功能陈述"><a href="#功能陈述" class="headerlink" title="功能陈述"></a>功能陈述</h1><p>将一个函数转换为一个为 Thunk 函数，这个函数被调用后会返回一个以回调函数为参数的函数。可以参考 <a href="http://es6.ruanyifeng.com/#docs/generator-async#Thunk-函数" target="_blank" rel="external">Thunk 函数</a>。</p>
+<h1 id="简单实现"><a href="#简单实现" class="headerlink" title="简单实现"></a>简单实现</h1><p>因为需求比较简单，所以我自己先实现了一下，然后比较与官方仓库的差异，可以发现一些源码的特点。</p>
+<p>我自己的实现:</p>
+
+    <pre><code class="lang-js">module.exports = <span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-params">(fn)</span> </span>{
+  <span class="hljs-keyword">return</span> <span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-params">(<span class="hljs-rest_arg">...args</span>)</span> </span>{
+    <span class="hljs-keyword">return</span> <span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-params">(callback)</span> </span>{
+      fn(...args, callback)
+    }
+  }
+}
+</code></pre>
+<h2 id="从测试看问题"><a href="#从测试看问题" class="headerlink" title="从测试看问题"></a>从测试看问题</h2><p>源码有 test 文件，可以将源码的测试文件 clone 到本地后测试。将上面的代码测试后可以发现 3 个测试未通过:</p>
+<ol>
+<li>thunkify(fn) should maintain the receiver</li>
+<li>thunkify(fn) should catch errors</li>
+<li>thunkify(fn) should ignore multiple callbacks</li>
+</ol>
+<h3 id="maintain-the-receiver"><a href="#maintain-the-receiver" class="headerlink" title="maintain the receiver"></a>maintain the receiver</h3><p>通过 test 文件代码发现，这里主要涉及到一个关于 <code>this</code> 的问题:</p>
+
+    <pre><code class="lang-js"><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">load</span> <span class="hljs-params">(fn)</span></span> {
+    fn(null, this.name)
+}
+
+var user = {
+    name: <span class="hljs-string">'tobi'</span>,
+    <span class="hljs-built_in">load</span>: thunkify(<span class="hljs-built_in">load</span>)
+}
+
+user.<span class="hljs-built_in">load</span>()(<span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-params">(err, name)</span></span> {
+    <span class="hljs-keyword">if</span> (err) <span class="hljs-keyword">return</span> done(err)
+    <span class="hljs-built_in">assert</span>(name === <span class="hljs-string">'tobi'</span>)
+    done()
+})
+</code></pre>
+<p>原函数 f 可能是某个对象的方法，所以要保证 thunkify 后的函数，称它为 tf, 仍然能正常访问 <code>this</code> ，所以 tf 函数里需要能引用到原函数 f 里 <code>this</code> 的值，<code>thunkify</code> 源码中用 <code>ctx</code> 变量对其表示原函数 f 的 <code>this</code>：</p>
+
+    <pre><code class="lang-js"><span class="hljs-keyword">var</span> ctx = <span class="hljs-keyword">this</span>; <span class="hljs-comment">// line 27</span>
+fn.apply(ctx, args); <span class="hljs-comment">// line 43</span>
+</code></pre>
+<h3 id="catch-errors"><a href="#catch-errors" class="headerlink" title="catch errors"></a>catch errors</h3><p>尽管原函数 f 是需要一个回调函数做参数，理论上这个回调函数应该能捕捉异常了，但有些时候，这个回调函数可能没有正常 catch，例如测试文件中的样例:</p>
+
+    <pre><code class="lang-js">// fn 作为回调函数却没有捕捉这个异常
+<span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">load</span> <span class="hljs-params">(fn)</span></span> {
+    throw new Error(<span class="hljs-string">'boom'</span>)
+}
+
+<span class="hljs-built_in">load</span> = thunkify(<span class="hljs-built_in">load</span>)
+
+<span class="hljs-built_in">load</span>()(<span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-params">(err)</span></span> {
+    <span class="hljs-built_in">assert</span>(err)
+    <span class="hljs-built_in">assert</span>(err.message === <span class="hljs-string">'boom'</span>)
+    done()
+})
+</code></pre>
+<p>而 thunkify 则 “帮” 其捕捉了。当发现原函数 f 抛出异常时，源码中自动用用户传进的回调函数捕捉了。</p>
+
+    <pre><code class="lang-js"><span class="hljs-comment">// line 42 - 47</span>
+<span class="hljs-comment">// done 代表用户传进的回调函数</span>
+<span class="hljs-selector-tag">try</span> {
+  <span class="hljs-selector-tag">fn</span><span class="hljs-selector-class">.apply</span>(ctx, args);
+} <span class="hljs-selector-tag">catch</span> (err) {
+  <span class="hljs-selector-tag">done</span>(err);
+}
+</code></pre>
+<h3 id="ignore-multiple-callbacks"><a href="#ignore-multiple-callbacks" class="headerlink" title="ignore multiple callbacks"></a>ignore multiple callbacks</h3><p>理论上讲，一个回调函数 callback 只能被调用一次，但在实际情况中，仍然会存在被调用多次的意外情况，例如测试文件中的例子：</p>
+
+    <pre><code class="lang-js">function <span class="hljs-keyword">load</span> (<span class="hljs-function"><span class="hljs-keyword">fn</span>) {
+    <span class="hljs-keyword">fn</span><span class="hljs-params">(<span class="hljs-built_in">null</span>, <span class="hljs-number">1</span>)</span>
+    <span class="hljs-keyword">fn</span><span class="hljs-params">(<span class="hljs-built_in">null</span>, <span class="hljs-number">2</span>)</span>
+    <span class="hljs-keyword">fn</span><span class="hljs-params">(<span class="hljs-built_in">null</span>, <span class="hljs-number">3</span>)</span>
+}
+
+<span class="hljs-title">load</span> = thunkify<span class="hljs-params">(<span class="hljs-keyword">load</span>)</span>
+
+<span class="hljs-keyword">load</span><span class="hljs-params">()</span><span class="hljs-params">(done)</span>
+</span></code></pre>
+<p>为了确保回调函数 callback 只被调用了一次，<code>thunkify</code> 对回调函数进行了一次封装：</p>
+
+    <pre><code class="lang-js"><span class="hljs-comment">// line 34 - 40</span>
+<span class="hljs-keyword">var</span> called;
+
+args.push(<span class="hljs-function"><span class="hljs-keyword">function</span>(<span class="hljs-params"></span>)</span>{
+    <span class="hljs-keyword">if</span> (called) <span class="hljs-keyword">return</span>;
+    called = <span class="hljs-literal">true</span>;
+    done.apply(<span class="hljs-literal">null</span>, <span class="hljs-built_in">arguments</span>);
+});
+</code></pre>
+<p><code>called</code> 作为一个 flag，第一次调用时，if 语句会把 called 当作否定值，所以 <code>return</code> 不会被执行。但从第二次开始，<code>called</code> 都会变成 <code>true</code>，所以 <code>return</code> 都会执行，确保了回调函数 callback 只会被调用一次。</p>
+<p>这里需要注意一下 <code>args</code> 这个变量，它每次都会 <code>push</code> 一下，因为 <code>thunkify</code> 后的函数 tf 可能被引用调用多次:</p>
+
+    <pre><code class="lang-js"><span class="hljs-symbol">function</span> <span class="hljs-meta">fn</span> (done) {
+  done(null, Date.now())
+}
+
+<span class="hljs-symbol">let</span> tf = thunkify(<span class="hljs-meta">fn</span>)()
+
+<span class="hljs-symbol">let</span> <span class="hljs-built_in">c1</span>, <span class="hljs-built_in">c2</span>, <span class="hljs-built_in">c3</span>
+<span class="hljs-symbol">c1</span> = <span class="hljs-built_in">c2</span> = <span class="hljs-built_in">c3</span> = (err, value) =&gt; console.log(value)
+
+<span class="hljs-symbol">tf</span>(<span class="hljs-built_in">c1</span>)
+<span class="hljs-symbol">tf</span>(<span class="hljs-built_in">c2</span>)
+<span class="hljs-symbol">tf</span>(<span class="hljs-built_in">c3</span>)
+</code></pre>
+<p>这个程序最后只会输出一次值。因为根据闭包规则，第二次调用 tf 开始，回调函数就被 <code>push</code> 进 <code>args</code> 里了。当第三次调用 tf 时，此时的 args 等价为 <code>[c1, c2, c3]</code>，根据源码， <code>tf(c3)</code> 相当于调用 <code>tf.apply(ctx, [c1, c2, c3])</code>。所以此时真正执行的回调是 <code>c1</code>，如前文所说，这个 <code>c1</code> 是被源码封装过的，里面的内容只会被执行一次。</p>
+<h3 id="自己的实现（改进后）"><a href="#自己的实现（改进后）" class="headerlink" title="自己的实现（改进后）"></a>自己的实现（改进后）</h3><p>结合 ES6，自己在解决上述问题后又实现了一遍，功能上没有改变，全是增加鲁棒性</p>
+
+    <pre><code class="lang-js">module.exports = <span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-params">(fn)</span> </span>{
+  assert(<span class="hljs-string">'function'</span> === <span class="hljs-keyword">typeof</span> fn, <span class="hljs-string">'function required'</span>)
+
+  <span class="hljs-keyword">return</span> <span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-params">(<span class="hljs-rest_arg">...args</span>)</span> </span>{
+    <span class="hljs-keyword">const</span> ctx = <span class="hljs-keyword">this</span> <span class="hljs-comment">// fix test 'should maintain the receiver'</span>
+
+    <span class="hljs-keyword">return</span> <span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-params">(callback)</span> </span>{
+      <span class="hljs-keyword">const</span> refinedCallback = <span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-params">(callback)</span> </span>{
+        let first = <span class="hljs-literal">true</span>
+        <span class="hljs-keyword">return</span> <span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-params">(<span class="hljs-rest_arg">...args</span>)</span> </span>{
+          <span class="hljs-keyword">if</span> (!first) <span class="hljs-keyword">return</span>
+          first = <span class="hljs-literal">false</span>
+          callback(...args)
+        }
+      }
+
+      args.push(refinedCallback(callback))
+
+      <span class="hljs-keyword">try</span> {
+        fn.call(ctx, ...args)
+      } <span class="hljs-keyword">catch</span> (err) {
+        callback(err)
+      }
+    }
+  }
+}
+</code></pre>
+<h2 id="从-Commit-看改进"><a href="#从-Commit-看改进" class="headerlink" title="从 Commit 看改进"></a>从 Commit 看改进</h2><p>查看各个 commit，以及以前的代码，可以发现一些有趣的事。</p>
+<h3 id="crankshaft"><a href="#crankshaft" class="headerlink" title="crankshaft"></a>crankshaft</h3><p>在 <a href="https://github.com/tj/node-thunkify/commit/d537460eb23e3d556c4f726eb04bef189dd3994f" target="_blank" rel="external">d53746</a> 这个 commit 中，提交者改变了 arguments 变成了数组的方式，从简单的 slice 方法，变成了声明一个数组然后一一赋值的方法。</p>
+<p>第一次看到 <code>crankshaft</code> 还不知道是什么，后来才知道是指代 Chrome 的一个引擎。<a href="https://github.com/tj/node-thunkify/pull/12" target="_blank" rel="external">Pull request #12</a> 有提到这个优化，虽然我还是觉得这个优化在某种程度牺牲了部分可读性。</p>
+<h3 id="remove-memoization"><a href="#remove-memoization" class="headerlink" title="remove memoization"></a>remove memoization</h3><p>参考 <a href="https://github.com/tj/node-thunkify/commit/30f25adebf79f4793fd5c8b6f873d5e093dfaf6d" target="_blank" rel="external">30f25a</a> 移除了一个记忆化操作。</p>
+<p>在这个版本之前的代码，如果执行下面的程序，会发现这三次执行都输出同样的结果，这多多少少有点反直觉，所以 commit 上 tj 也说 <code>promises have different expectations</code>。</p>
+
+    <pre><code class="lang-js"><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">fn</span> (<span class="hljs-params">done</span>) </span>{
+  done(<span class="hljs-literal">null</span>, <span class="hljs-built_in">Date</span>.now())
+}
+
+<span class="hljs-keyword">let</span> dtn = thunkify(fn)()
+
+dtn(<span class="hljs-function">(<span class="hljs-params">err, value</span>) =&gt;</span> <span class="hljs-built_in">console</span>.log(value))
+dtn(<span class="hljs-function">(<span class="hljs-params">err, value</span>) =&gt;</span> <span class="hljs-built_in">console</span>.log(value))
+dtn(<span class="hljs-function">(<span class="hljs-params">err, value</span>) =&gt;</span> <span class="hljs-built_in">console</span>.log(value))
+</code></pre>
+<p>所以这个改进后，执行上述程序只会输出一次结果。</p>
+<h3 id="add-assert-fn"><a href="#add-assert-fn" class="headerlink" title="add assert(fn)"></a>add assert(fn)</h3><p>在 <a href="https://github.com/tj/node-thunkify/commit/05abda9cba45b8669caebbeab4fbe5f4a666336b" target="_blank" rel="external">05abda</a> 处增加了一个 assert 调用避免被 thunkify 的参数不是函数 – 一个提高函数鲁棒性的功能。</p>
+<h3 id="remove-support-for-eager-execution"><a href="#remove-support-for-eager-execution" class="headerlink" title="remove support for eager execution"></a>remove support for eager execution</h3><p><a href="https://github.com/tj/node-thunkify/commit/a504b918a93d04aaa62f467ae7213a25f47d0f69" target="_blank" rel="external">a504b9</a> 算一次比较大的改进，发现这个 commit 大大缩减了代码。不过这次删去了避免回调函数被多次执行的代码，也就是对回调函数的封装。在这之后的几个 commit 里，维护者又把这一层封装添加了回去。</p>
+<h1 id="总结"><a href="#总结" class="headerlink" title="总结"></a>总结</h1><p>在没有看过 <code>thunkify</code> 源码的情况下，这个功能的实现并不算难。但 <code>thunkify</code> 代码比在本文开始我自己写的代码更优秀的地方就在于代码的鲁棒性，这一点从测试文件和 commit 日志中可见一斑，确实考虑了生产环境中可能出现的众多复杂情况，更适合日常使用。同时，阅读 <code>thunkify</code> 源码的目的也并不限于代码的实现，更多的是学习维护和增加代码的鲁棒性。</p>
+<h1 id="参考"><a href="#参考" class="headerlink" title="参考"></a>参考</h1><ol>
+<li><a href="http://es6.ruanyifeng.com/#docs/generator-async" target="_blank" rel="external">Generator 函数的异步应用</a></li>
+<li><a href="https://blog.daraw.cn/2016/11/11/notes-about-node-thunkify/" target="_blank" rel="external">node-thunkify源码阅读笔记</a></li>
+</ol>
+]]></content>
+    
+    <summary type="html">
+    
+      &lt;p&gt;最近看了些项目的源码，其中就包括 &lt;code&gt;thunkify&lt;/code&gt;。虽然 &lt;code&gt;thunkify&lt;/code&gt; 代码简单，很快就读完了，不过看看项目的测试文件和提交历史，也还是能看出很多事物的。这次阅读的代码是当前最新版本，commit 编号 &lt;a href
+    
+    </summary>
+    
+    
+      <category term="JavaScript" scheme="https://lazzzis.github.io/hexo-theme-only/tags/JavaScript/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>终于完成了一个 OJ -- Putong OJ</title>
+    <link href="https://lazzzis.github.io/hexo-theme-only/2017/06/01/notes-of-putongoj/"/>
+    <id>https://lazzzis.github.io/hexo-theme-only/2017/06/01/notes-of-putongoj/</id>
+    <published>2017-06-01T15:53:12.000Z</published>
+    <updated>2017-07-30T05:48:51.000Z</updated>
+    
+    <content type="html"><![CDATA[<p><strong>Putong OJ</strong> – 一个看上去很普通的 Online Judge，现已<a href="http://acm.cjlu.edu.cn" target="_blank" rel="external">上线</a></p>
+<h1 id="Features"><a href="#Features" class="headerlink" title="Features"></a>Features</h1><p>说一些我自认为可以称得上特性的”特性”</p>
+<h2 id="单页应用"><a href="#单页应用" class="headerlink" title="单页应用"></a>单页应用</h2><p>估计现在没有一个 OJ 采用的是单页应用吧。</p>
+<p>其实最初开发单页应用的一个初衷是尽可能减轻服务器的压力，因为学校的服务器不是很好，这一点我后面还会说明。所以我觉得相比于后端渲染，前端渲染能减轻服务器压力。</p>
+<p>另外，采用单页应用，那么后端就可以采用 restful 设计，后端的编写压力就减少了不少。前端方面因为采用的是 Vue 作为框架，开发上相对简单点，毕竟 vue 的学习难度比 react 要小一点，而且现在与 vue 相关的现成组件也不少，因此 <del>偷懒</del> 短期开发也是相对比较简单的。而且，我一个毕业狗，考虑到未来学弟学妹的维护难度，或许选择 vue 会好一点吧。</p>
+<h2 id="Koa-v2-Restful"><a href="#Koa-v2-Restful" class="headerlink" title="Koa v2 + Restful"></a>Koa v2 + Restful</h2><p>后端上采用了 Node.js，而且采用了 koa v2 框架，摆脱了 callback hell，并且用上 <code>async / await</code>，因此在代码编写给人的快感自然要大于 Express。并且摆脱了后端渲染，restful 的后端框架说实话真的轻松了不少。</p>
+<h2 id="干死-IE8"><a href="#干死-IE8" class="headerlink" title="干死 IE8"></a>干死 IE8</h2><p>在这里我还是 <strong>激进</strong> 了一点。保守一点说，现在大学内有一部分机子其实仍在坚持 IE8，而且是仅有一个 IE8 浏览器。如果从保证运行的角度看，我其实有责任兼容 IE8 的。但是从另一个角度看，我为何要兼容 IE8:</p>
+<ol>
+<li>现在都 2017 年，IE8 本来就该被淘汰，再怎么说 IE10 以上也是要的，而且学校这边有些机房的机子已经配备了 Chrome，那么其它机子同样配置 Chrome 也是早晚的事。</li>
+<li>我何必要拿 IE8 折磨自己？如果要兼容 IE8，那么我至少 vue 都不能用了。既然连 vue 都不能用了，那写单页应用的难度就增加的不是一点半点。总不能让我用 jQuery 去写单页应用吧。。</li>
+<li>跟上一条类似，一是保证我开发轻松，二是保证后来的学弟学妹维护轻松，我使用了很多一些现成的且简单易用的前端库，二这些前端库对浏览器的兼容性不一，但要保证全部都能正常运行，那么 IE 还是别想了。。</li>
+</ol>
+<h2 id="redis-mongodb"><a href="#redis-mongodb" class="headerlink" title="redis + mongodb"></a>redis + mongodb</h2><p>严格意义上说不上特性。但是确实觉得 redis + mongodb 确实省了不少力气。最直接的一点是 mongodb 的字段属性可以是数组，我可以用一个列表即可表示一个比赛内所有题目的 id，如果换作 mysql 的话，估计又多一张表了吧。有时感觉数据里的表就和代码行数一样，越多越容易出问题，所以还是尽量控制在可承受的范围内。</p>
+<h1 id="开发杂想"><a href="#开发杂想" class="headerlink" title="开发杂想"></a>开发杂想</h1><h2 id="开发初衷"><a href="#开发初衷" class="headerlink" title="开发初衷"></a>开发初衷</h2><p>我写的这个 OJ 应该是第三代了。第一代是一名学长在 hustoj 起初上改写的 OJ。这个 OJ 用了大概 7，8 年了吧，而且还是部署在一台实体机里。估计跟机器老旧也有点关系，这台机器在某次拿去办比赛之后突然损坏了，而且是硬件损坏了，但幸运地是硬盘没问题，还可以把里面的数据取出来。</p>
+<p>在这种情况下，上一届某学长决定重新写一个 OJ，而且为了表决心，毕业设计的题目就是作一个 OJ。在他的毕业设计任务书里也清楚写到要用 Golang + vue 的组合写一个 OJ。不过最后，他跑路了。。。他因为某些原因，并没有开发出一个新的 OJ，而是拿了 Github 上的一个用 Golang 写的但没用 vue 的 OJ 充当毕业设计了。然后这个 OJ 最后部署到了学校的云服务器上，并且还是用 docker 部署，就这样开始使用了。不过一个问题是，这位学长没有同步以前的数据，所以这个 OJ 部署上去后并没有以前的题目，而是全新的只有一道 A+B 的题目。这个 OJ 就是第二代 OJ 了，就这样用了一年，直到我重写。</p>
+<p>第二代 OJ 其实也还好，毕竟这项目在 Github 上也维护了一段时间了，开发者也在生产环境上使用了一段时间了。因此，重写 OJ 更多的是出于我们自身的原因。一个比较直接但也有点尴尬的原因是这个 OJ 是用 Golang 写的。如果没人会 Golang，那么维护这个 OJ 就有点难了，因为指导老师会时不时要求对 OJ 做些改动。我不想否认 Golang 是一门优秀的语言，但问题是放在我所在的校园内，愿意学习 Golang 的人太少，包括我自己。我不想为了一个 OJ 而去学 Golang，更何况在我已经想用 Node 改写的情况下。另外，至少目前 Golang 的工作岗位相对较少，对某些人来说，学习 Golang 的动力略有不足。同样是学校不会教的语言，学习 PHP, Java, JavaScript, Python 对学生还是主流。</p>
+<p>另一个改写的原因是，就是我单纯地想写一个 JS 前后端全包的网站了。这一点确实是出于自身利益。</p>
+<h2 id="语言选择"><a href="#语言选择" class="headerlink" title="语言选择"></a>语言选择</h2><p>语言选择是第一道坎。如上文所说，其实有四个比较好的选择: PHP, Java, JavaScript, Python。一个首先排除 Java，尽管很多人写过 Java，但我个人对 Java 已经有点反感，不认同这一门废话多和设计模式多的语言; 对于 PHP，我没有学过 PHP，而且从我个人的理解看，PHP7 + Laravel 或许是可以考虑的，其它 PHP 版本和 PHP 框架似乎显得不怎么样; 对于 JavaScript 和 Python，我个人还是比较喜欢的，对于前者，只要搞前端的人都会，对于后者，学习成本低，而且学习的人也多，毕竟 Python 不止能用于 Web 开发。之所以选择 JavaScript 而不是 Python，只是单纯地认为 Node.js 性能会优于 Python，毕竟要考虑到学校给的机器挺一般的。另外选择 JS 的话，前后端都是 JS，对于维护者来说，或许也会轻松点吧。</p>
+<h2 id="学校的服务器"><a href="#学校的服务器" class="headerlink" title="学校的服务器"></a>学校的服务器</h2><p>虽然平时用用是放在学校的云服务器上，可能还好点。但是到了比赛，为了搞起局域网，不得不把 OJ 弄到一个实体机并搬到比赛场地来，然而这个实体机真心不行。至少上一年的比赛就出了大问题，学生访问机器时，会出现“阻塞”，有时能访问，有时显示无响应。然后看机器上的 log，也没抛出异常，据学长说是并发可能有问题。</p>
+<p>虽然不知道是不是真的是并发问题，但如果考虑到并发的话，目前除了 Golang，应该也只有 Node 是一个好的选择了吧。</p>
+<h2 id="版本维护"><a href="#版本维护" class="headerlink" title="版本维护"></a>版本维护</h2><p>版本维护确实有点糟糕。或者说最初的版本维护根本说不上版本维护吧，感觉像打工作报告似的，每天写写今天做了啥。后来出现的一个问题是，版本控制形同虚设，后来我就几乎没做，然后更糟糕的是，我同时在两三台机器上开发，导致三台机器上的版本又不同步，此时我又想起了同步的好处 (╯°□°）╯︵ ┻━┻。</p>
+<p>后来伴随着 koa v1 到 koa v2 的重写，以及前端增加 vuex，我干脆把 Github 上的项目删了重建，重新做了一个版本控制。这次做版本控制前又温习了一遍 git 的常用命令，开始搞起分支。而且发现 git 还有 archive 这个好用的命令。</p>
+<h2 id="部署上线"><a href="#部署上线" class="headerlink" title="部署上线"></a>部署上线</h2><p>本来也想用 docker 部署的，无奈发现 npm 在 docker 里的速度实在是感人(。ヘ°)</p>
+<p><img src="https://s29.postimg.org/4ii3q3chj/Screen_Shot_2017-06-02_at_10.11.01.png" alt="Github Issue"></p>
+<p>最后用 docker 打包只有 redis 和 mongodb。</p>
+<h2 id="起名"><a href="#起名" class="headerlink" title="起名"></a>起名</h2><p>其实我挺不想用学校的名义给 OJ 起名字，不想叫它 XX 大学 OJ，总觉得这样起名总有一种强调这是 XX 大学的 OJ，不是其它大学的 OJ 一样。但实际上，作为一个开源项目，至少别人想用就用，何必到处在 OJ 里强调大学。这让我想起来 Chrome 刚出来的时候，Chrome 刚出来的时候，界面完全找不到 Google 和 Chrome 标识的字样，让你感觉你就是单纯的使用一个优秀的浏览器，甚至让你不在意这是什么浏览器。所以我不用大学的名字起名，也有一丝这种想法，</p>
+<p>另外，我也像想取个奇特点的名字嘛＼（Ｔ∇Ｔ）／</p>
+<p>Putong 其实就是<code>普通</code>，想法就是来自于 <code>普通 Disco</code></p>
+<embed height="415" width="544" quality="high" allowfullscreen="true" type="application/x-shockwave-flash" src="//static.hdslb.com/miniloader.swf" flashvars="aid=2129461&page=1" pluginspage="//www.adobe.com/shockwave/download/download.cgi?P1_Prod_Version=ShockwaveFlash">
+
+<h1 id="后记"><a href="#后记" class="headerlink" title="后记"></a>后记</h1><p>虽然开发上线了，不过有一些不足也是肯定了，争取毕业前把一些坑给填一下，比如多写点有意义的注释，留点有意义的文档之类的。还有一个给题目加标签的功能也没加，可能要留给后来维护的学弟学妹了吧。</p>
+<p>OJ 后端的开发有很多参考了 <a href="http://acdream.info/" target="_blank" rel="external">Acdream</a> 和 <a href="http://acm.zjgsu.edu.cn/" target="_blank" rel="external">GoOnlineJudge</a> 的设计。这两个 OJ 都是优秀的 OJ。</p>
+<hr>
+<p><img src="/projects/images/48134921.jpg" alt="Pixiv ID 48134921"></p>
+]]></content>
+    
+    <summary type="html">
+    
+      &lt;p&gt;&lt;strong&gt;Putong OJ&lt;/strong&gt; – 一个看上去很普通的 Online Judge，现已&lt;a href=&quot;http://acm.cjlu.edu.cn&quot; target=&quot;_blank&quot; rel=&quot;external&quot;&gt;上线&lt;/a&gt;&lt;/p&gt;
+&lt;h1 id=&quot;
+    
+    </summary>
+    
+    
+      <category term="JavaScript" scheme="https://lazzzis.github.io/hexo-theme-only/tags/JavaScript/"/>
+    
+      <category term="Projects" scheme="https://lazzzis.github.io/hexo-theme-only/tags/Projects/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>杭州白马湖漫展一行</title>
+    <link href="https://lazzzis.github.io/hexo-theme-only/2017/04/28/anime-convention-in-hangzhou/"/>
+    <id>https://lazzzis.github.io/hexo-theme-only/2017/04/28/anime-convention-in-hangzhou/</id>
+    <published>2017-04-28T13:51:02.000Z</published>
+    <updated>2017-07-30T05:48:51.000Z</updated>
+    
+    <content type="html"><![CDATA[<p>作为一名在杭州读书的学生，其实从大一开始，我就一直想去这个展会了。第一次和第二次“太乖”，遇上了点学院的事，听了辅导员和学生会的建议，给他们做苦力去了。第三次正忙于升学考试，故自愿放弃了那次机会。但今年，我在杭州，又没有理由不去，所以还是去了。之所以选择这个日子（4月28日），主要还是因为听说“山下智博”也会来展，想去见见，所以选择了今天。</p>
+<h1 id="无聊的-A-馆一层"><a href="#无聊的-A-馆一层" class="headerlink" title="无聊的 A 馆一层"></a>无聊的 A 馆一层</h1><p>本次展会分两个馆，A 馆与 B 馆。进门直接进的是 A 馆，而且 A 馆一层这些的“好位置”都给了“官媒” – CCTV，浙江卫视等媒体。相对来说，这些展位的内容显得无聊枯燥，这点从人数上就可以看出</p>
+<p><img src="https://c1.staticflickr.com/3/2879/33512656613_cd0fb22bc0_c.jpg" alt="入口处观望"></p>
+<h1 id="热闹的-A-馆二层"><a href="#热闹的-A-馆二层" class="headerlink" title="热闹的 A 馆二层"></a>热闹的 A 馆二层</h1><p>而二层则相对好多了。网易在二层占了两个展位 —- 一个给阴阳师，一个给网易的代理游戏（如守望先锋，星际，魔兽等）。我与小伙伴们在后一个展台前站了一会，看了看水友赛。不过可惜我也就凑凑热闹了，因为我压根不玩这些游戏。</p>
+<p>阴阳师展位相当热闹。展位上同样有水友赛，但还有几个 COSer 作为主播在网易的 CC 直播上做直播。而这个展会最热闹的莫过于下午两点的“山下”登场时了。正如微博上所说，山下真的女装了，COS 了某个式神（原谅我连阴阳师也没玩过）。在活动的两个小时里，在主持人的主持下，山下与台下的观众做了些游戏，然后山下现场抽卡。总体来说，都是以阴阳师为主题的游戏。对于那些又爱山下又爱阴阳师的人来说最喜欢这种活动了。</p>
+<p><img src="https://c1.staticflickr.com/3/2814/33512766803_663ae5457d_c.jpg" alt="阴阳师"></p>
+<p>虽然我参观此展的目的之一是为了见山下智博，但我在看了一个小时后，默默地离开了一会。一方面如前文所说，我不爱也不玩阴阳师，听不懂主持人的话，不懂游戏的内容。另一方面，前面的人太高了！– 我看不到智博了。。。 <code>(╯︵╰,)</code></p>
+<p><img src="https://c1.staticflickr.com/3/2890/33938820510_2ca58cc829_c.jpg" alt="阴阳师"></p>
+<p>二楼另外的展位也都是游戏了，比如电魂等。对我这种不怎么看游戏的人来说，看了看一会就走了。</p>
+<h1 id="更多精彩的-B-馆一层"><a href="#更多精彩的-B-馆一层" class="headerlink" title="更多精彩的 B 馆一层"></a>更多精彩的 B 馆一层</h1><p>或许 B 馆一层更符合参加漫展的人吧，这里云集了国外的展方，比如东京电视台，Disney。东京电视台的馆内还摆了各式的手办，标价大多 100 或 150，少数600，800。大多手版是 V 家，物语之类的，相对来说受众面还是比较宽的。馆外还摆了一排的扭蛋，10 RMB 一次。不过不管是扭蛋还是手办，我都没有入手。</p>
+<p><img src="https://c1.staticflickr.com/3/2822/33512857933_f9ab1f14a3_c.jpg" alt="手办们"></p>
+<p><img src="https://c1.staticflickr.com/5/4157/34323109655_990cf7229d_c.jpg" alt="兔斯基（注意背景是东京电视台展区）"></p>
+<p><img src="https://c1.staticflickr.com/5/4166/33481472564_2c0cac72a9_c.jpg" alt="星战"></p>
+<p>除了国外的，也有国内的。展馆中心一眼就能看到 B 站的直播台，不过这个直播台对我来说又是一个没有吸引力的地方了。因为这里并没有多少活动，除了正午 12 点会有几名舞见来馆接受采访。</p>
+<p><img src="https://c1.staticflickr.com/5/4182/33481242074_040d12d9f9_c.jpg" alt="B 站直播台"></p>
+<p><strong>最吸引我的</strong> 或许是 B 站旁边的天文角川了。在其它馆都在用大音箱放音乐的时候，只有天文角川默默地呆在那。馆内罗列了较多的书籍，从画册到小说，角川的主要卖品都有身影。大多数书籍都已塑封，因此很少有人对着一本书看太长时间。在这些书籍中，《冰菓》很好地吸引了我的目光。就在前几天，我就有想买《冰菓》第 5 册的冲动，但苦于线上的商家无货。而我在线下却见到了实体书籍，自然让我兴奋了好一会。原价 25 的书籍，实付 20，同时附赠了一张海报。买书是在早上，在快结束展会的时候，我还是回到了天文角川看了一会，犹豫着是不是要再买些书。尽管有一些 5 元特价书，如 灼眼的夏娜，但我仔细思考下，从以前的经历看，我就算买了这书估计也不会太喜欢看。因此第二次去天文角川并没有买什么物品。</p>
+<h1 id="乱七八糟的-B-馆二层"><a href="#乱七八糟的-B-馆二层" class="headerlink" title="乱七八糟的 B 馆二层"></a>乱七八糟的 B 馆二层</h1><p>B 馆二层显得无序一点。这里有一些奇怪的官方展位 – 比如阿里云（你来混脸熟么？），也有部分不知名的小商铺。在二层仍能看到 B 站的身影 – B 站的店铺。不过 B 站内的商品与淘宝上的 B 站店别无二致，价格也无多少优惠，再者实用性或是装饰性也略差，我觉得我还没到给 B 站充信仰的程度，故而没在此购物。</p>
+<h1 id="全是小商铺的-B-馆三层"><a href="#全是小商铺的-B-馆三层" class="headerlink" title="全是小商铺的 B 馆三层"></a>全是小商铺的 B 馆三层</h1><p>这里几乎全是小商铺。本以为会有各种新奇的周边，但仅逛了一会就发现我还是想错了。这里的商铺 <strong>同质化</strong> 有点严重。80 % 以上的商品分为 4 类 – 手办类，抱枕类，挂画类，福袋类。其中后三种几乎会同时在同一个商铺内，因此这么算的话，也就两种商铺了。而我对挂画和抱枕比较挑剔，又不信福袋。这么一算也就只能看看手办了。然而，相对竞争力而言，这些商铺的手办尽管自称官方，但似乎从每种角度上比不上国外方展馆所卖的更具官方性。况且手办的受众其实不如抱枕之类的，一个“滑稽”抱枕几乎男女通吃，只要玩表情的路人几乎都会心动一下。总的来讲，商家间的区别在品类上已经不算大，在加上抱枕挂画之类的主题几乎也有很大一部分的重叠，商家与商家的区别只能体现在福袋的大小与价格上了。因此，这里的商铺并不算多样与精彩。</p>
+<p><img src="https://c1.staticflickr.com/5/4168/34282275796_0d6234e1c1_c.jpg" alt="商铺内的手办"></p>
+<p>即使如此，却还是有一个与周围“格格不入”的商铺 – 一家卖 CD 的商铺。这家商铺也主要以 ACG 为主，而且还包含了东方同人！（这个馆内东方的数量并不多，甚至稀有）在价格上，商家已经打出了买一送一的策略，而且一张的价格收 90 RMB，看起来是比较划算的。我挑选了一张化物语的CD（刚好最近在补化物语），然后挑了一张蝶 P 的碟。这次消费算已经是我在这次行程中最大的消费了。除了这些 CD 能吸引我的兴趣外，其它真的很少了。</p>
+<h1 id="无存在感的-B-馆四层"><a href="#无存在感的-B-馆四层" class="headerlink" title="无存在感的 B 馆四层"></a>无存在感的 B 馆四层</h1><p>除了“朱德庸”展区有点意思，其它展区（儿童画，法制题材画）实在没啥人看。</p>
+<p><img src="https://c1.staticflickr.com/3/2858/34192123471_62f52f2c35_c.jpg" alt="漫画家朱德庸的作品"></p>
+<h1 id="一些吐槽"><a href="#一些吐槽" class="headerlink" title="一些吐槽"></a>一些吐槽</h1><p>尽管这次的展会是以动漫为主题，不过 BAT 也还是齐了 – 腾讯动漫，阿里云，以及百度外卖。。。</p>
+<p>馆内居然还有 vipabc，英孚教育的商铺。别人买了亲子票带孩子来玩，孩子很高兴，然后父母却又给他们报了个班？</p>
+<p>没怎么看清山下智博，除了前面的观众挡住我的视线外，一个做直播的刚好也挡住了我的视线。</p>
+<p>优酷，qq 等展位上都放了自家的或流行的动漫角色，而旁边的乐视放了消防教育动漫展（你为何不与法制教育主题展放到同一个展区呢？）。</p>
+<p>还真有老年人来参观的，估计是陪孩子吧，还真是辛苦了。</p>
+<h1 id="结语"><a href="#结语" class="headerlink" title="结语"></a>结语</h1><p>大学最后一次漫展，但却也是我参与的第一次漫展，也总算在毕业前完成了“参观漫展”这个任务。以后还会不会参加呢？如果有的话，我还是会考虑参加的。</p>
+<p>最后，贴张照片，拍摄于 B 站展区内(暂时不想露脸)：</p>
+<p><img src="https://c1.staticflickr.com/3/2811/34282503846_622ff1db53_c.jpg" alt=""></p>
+]]></content>
+    
+    <summary type="html">
+    
+      &lt;p&gt;作为一名在杭州读书的学生，其实从大一开始，我就一直想去这个展会了。第一次和第二次“太乖”，遇上了点学院的事，听了辅导员和学生会的建议，给他们做苦力去了。第三次正忙于升学考试，故自愿放弃了那次机会。但今年，我在杭州，又没有理由不去，所以还是去了。之所以选择这个日子（4月28日
+    
+    </summary>
+    
+    
+      <category term="ACG" scheme="https://lazzzis.github.io/hexo-theme-only/tags/ACG/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>一周面试小结</title>
+    <link href="https://lazzzis.github.io/hexo-theme-only/2017/03/24/recent-interviews-in-march-2017/"/>
+    <id>https://lazzzis.github.io/hexo-theme-only/2017/03/24/recent-interviews-in-march-2017/</id>
+    <published>2017-03-24T13:38:09.000Z</published>
+    <updated>2017-07-30T05:48:51.000Z</updated>
+    
+    <content type="html"><![CDATA[<h1 id="背景及摘要"><a href="#背景及摘要" class="headerlink" title="背景及摘要"></a>背景及摘要</h1><p>3 月 15 日，浙大玉泉校区举办了一场招聘会，近几百家单位参加。虽然我不是浙大本校生，但是外校学生若携带学生证件也是可以进入的。我总共带了 12 份简历前往，并全部投出。我的目标岗位为 Web 前端开发，但也对 Python / Node.js 后端有意向。目前我已进行了 3 次面试，分别是 <a href="https://www.lagou.com/gongsi/137471.html" target="_blank" rel="external">数聚科技</a>, <a href="https://www.lagou.com/gongsi/178043.html" target="_blank" rel="external">谷神星</a>, <a href="https://www.lagou.com/gongsi/210.html" target="_blank" rel="external">企朋</a> （点击可查看拉钩网上的信息）。我想在这篇文章里分享一下我这几次的面试过程，谈谈我的一些想法，希望对大家有帮助。</p>
+<h1 id="招聘会"><a href="#招聘会" class="headerlink" title="招聘会"></a>招聘会</h1><h2 id="简历"><a href="#简历" class="headerlink" title="简历"></a>简历</h2><p>这是我的 <a href="https://drive.google.com/file/d/0B46-8KBsYVBpcUZuemJqLXhFalk/view?usp=sharing" target="_blank" rel="external">简历</a> 。因为这份简历仅用于交流，因此我故意抹去了一些信息，比如真实姓名，联系方式，就读的大学等。同时这份简历是我在招聘会后稍作了修改的简历（增加了专业，意向岗位，将 “Java实习生” 改为 “Web 实习生”，其它均未改动）。</p>
+<p>事实上这是我第一次做招聘用的简历，直接套用了 Google Docs 的一个 Resume 模板。但是有几个细节在编辑时没有注意，在招聘会后或面试时我才发现这些是个问题：</p>
+<ol>
+<li><p><strong>没有标注专业</strong>。尽管现在有很多公司也不会太在意你是否是计算机专业出生，但专业本身仍然是 HR 关注的一个重要信息。其次，有些公司在招聘要求上也明确说明需要计算机相关专业的应聘者。因此专业作为一个关键信息仍不能忽视。</p>
+</li>
+<li><p><strong>没有写明目标岗位</strong>。在最初的（也就是用于投递的那一版的）简历里，我没有明确说明意向。招聘会上，有些 HR 会将收到的简历按岗位分开存放。但有些 HR 则不然。或者说，在人多的情况下， HR 也难免会忘记你的意向。注意，我在最初的简历中有写 “Java” 实习生的经历。这本来没问题，但是在我没写清岗位的情况下，有几位 HR 错以为我对 “Java工程师” 有意向。因此，目标岗位也是极重要的信息。</p>
+</li>
+<li><p><strong>简历或许可以再紧凑一点</strong>。看了一些他人的简历，大多有表格辅助，而且空间利用率明显比我的简历要高。或许可以再思考一下如何再打扮一下我的简历。</p>
+</li>
+</ol>
+<h2 id="现场"><a href="#现场" class="headerlink" title="现场"></a>现场</h2><p><strong>请务必先详细了解招聘场所内的具体分布！</strong></p>
+<p>当我到招聘会现场时，计划时长 3 小时的招聘会已经举办了半小时了。我当时也没注意 3 个场所内公司的分布，所以我一到现场时就先跑进了第一个分会场。看完第一个会场后我就前往了第二个会场。而当时的我仅知道有 3 个会场的存在，但不清楚 3 个会场中公司摊位的数量。结果就是，我在第 2 个会场花了近一个小时。而到了第 3 个会场，我呆了，这里比第 2 个会场有更多的企业。这时，距离结束大约剩余 1 小时。而且在最后大约 20 分钟，我惊奇地发现，这个场所（一个排球馆）的某处有一个不长的通道，通向同一场所的另一个区域 – 这里还有将近 100 家企业。更糟糕的是，<strong>他们已经开始收摊</strong> 了。更更糟糕的是，此时的我。。。手头已经 <strong>没有剩余的简历了</strong>。</p>
+<h1 id="数聚科技"><a href="#数聚科技" class="headerlink" title="数聚科技"></a>数聚科技</h1><p>我应聘了这家公司的前端，是第二个联系了我的公司（第一个公司以为我要应聘 Java 。。。所以我在电话上就拒绝了 HR）。HR 与我约好周五见面，时间是 3 点到 4 点。</p>
+<p>公司位于浙大科技园（浙大玉泉校区附近）。园内环境可以，但园外。。。背后是丘陵。</p>
+<p><img src="https://s22.postimg.org/50rcp9jn5/Screen_Shot_2017_03_22_at_22_54_21.png" alt="园内"></p>
+<p><img src="https://s17.postimg.org/588dmvpnz/Screen_Shot_2017_03_22_at_22_53_54.png" alt="园外"></p>
+<p>面试者是两人，分别是 HR 以及一名技术员工（该员工并没详细介绍自己，但从年龄和谈话上看，应该不是 CTO 或 PM）。</p>
+<p>对话首先以我简历上的项目为重点，主要问了我采用了哪些工具（框架以及包）。接着聊了一下我何时毕业以及我的住处问题。最后商讨薪水。</p>
+<p>整个过程中没有询问任何 <strong>技术上的问题</strong>。谈话中仅仅是说我怎么做项目。但没有问我如何解决一些问题，比如：如何解决高并发问题，也没有问我任何关于 JavaScript 语言的相关问题。</p>
+<p>其次，这个 HR 对技术不是很了解。虽然对于 HR 应不应该懂技术这个问题我保留意见，但我还是想吐槽一下。我在谈项目时我把 <code>Vue</code> 念作单词发音，而不是读成 3 个字母 (<code>V-U-E</code>)。但当我讲完项目后，HR 还是问了一句：你既然对这个 “wei you” 框架这么熟悉，那你对 <code>V-U-E</code> (读这 3 个字母) 熟不熟悉呢？ 我: (；￣Д￣） 这不同一个玩意么。。。</p>
+<p>还想吐槽一点，这个技术员工 <strong>似乎也不是特懂技术</strong>。因为我在简历里写了 SCSS (可以参考 <a href="http://sass-lang.com/" target="_blank" rel="external">Link</a>)，但这技术人员却说：这里是不是写错了，SCSS 是什么，应该是 CSS 吧？ 我: ヘ(゜Д、゜)ノ 你不是技术人员么？</p>
+<p>另外，目前这个公司前端业务不算特别重。据悉，该公司近期做的一个项目是调查问卷。这也难怪他们问我是否用过 E-Charts。不过当时我也完全不知道 E-Charts 是什么。</p>
+<p>总的来说，我个人对这家公司的面试感觉一般。因为我对面试也报了一种 <strong>学习</strong> 的态度，希望能在面试中也能了解一些自己的不足。但是这次面试恰恰相反，我反倒看到了他们的一些不足。</p>
+<p>关于薪水，我当时没有提，因为我还真没认真想这事，以为公司会主动提供数字再让我做决定。所以当时只是说之后电话联系。</p>
+<p>这是星期五（3 月 17 日）的面试，在这之后的第 3 天（星期一），我接到了 HR 的电话。电话中 HR 通知了我被录取的消息，不过在 HR 提出薪资前，我就回绝了。不管这个公司是否真的有前景，但至少我觉得我极不适合这个公司。</p>
+<h1 id="企朋"><a href="#企朋" class="headerlink" title="企朋"></a>企朋</h1><p>先上结论，这是我目前面试中 <strong>最满意</strong> 的公司，无论从面试过程还是公司本身来说。</p>
+<h2 id="笔试"><a href="#笔试" class="headerlink" title="笔试"></a>笔试</h2><p>笔试总体分三部分: 网络相关知识，算法编程知识，语言相关知识。可以看出该测试偏概念与算法，比如快排或 GC，没有考某某对象的使用或某某方法的使用。至于具体题目，我觉得还是不要透露的好。总之，对于这份试卷，虽然有几题明显可以看出是非原创的（就是从网上抄的），但总体上还是比较能反映一个编程者的基本素养的。</p>
+<h2 id="一面（技术面）"><a href="#一面（技术面）" class="headerlink" title="一面（技术面）"></a>一面（技术面）</h2><p>本以为前端工程师会问我关于 <code>prototype</code> 或 <code>Object</code> 相关的问题，但事实上这一位工程师没有注重这方面，而是问了我一些关于 <code>yield</code>，以及 <code>async await</code> 的一些问题。</p>
+<p>同时也问了一些关于 <code>session</code> 的概念或实现。我对 <code>session</code> 的理解程度仅仅是用 <code>Node.Js</code> 的某个包实现的程度。所以这方面我确实不懂，反而是工程师教导了我。</p>
+<p>再者，工程师和我聊了一些我项目上的事，针对我项目中写的提问，比如 restful 理解之类的。</p>
+<p>总体上讲，前端工程师并没有问那些 <code>JavaScript</code> 中的那些坑，而是注重我在项目上的实际能力，因为工程师多次对我如何理解和解决问题发问。</p>
+<h2 id="二面-CTO"><a href="#二面-CTO" class="headerlink" title="二面 (CTO)"></a>二面 (CTO)</h2><p>技术面之后，马上就安排了 CTO 前来面试。</p>
+<p>不得不说，CTO 整个人显示的气场就很不一样。第一眼看上去，CTO 和蔼可亲，同时有温文尔雅；而在提问和聊天时，又显得沉着睿智。</p>
+<p>和 CTO 的聊天中，我也明显感觉他的表达能力比我更甚一筹。举个例子，在聊项目时，我提到我对排行榜的处理是先以分数排序，再按时间顺序排序。而 CTO 一转述，则变成: <strong>此排序以分数为第一维度，以时间为第二维度</strong>。这种表述便显得书面化，也不容易被人误解。</p>
+<p>CTO 也问了我一些关于 <code>情怀</code> 的题，比如你崇拜的人之类的。（P.S. 这个问题好像有很多公司问呀，我在招聘会上就被一个公司问过了，还同样是一个招前端的公司 ((´д｀)) ）</p>
+<p>CTO 的具体问题细节同样就不透露了，但 CTO 的问题的出发点比前端工程师的站在一个更高的角度，包含了我对项目整个过程中出现的问题以及我个人的一些修养（比如对于 <code>Open Source</code> 和 <code>新技术</code> 的看法）。</p>
+<p>当然，这面试并不是单向的，最后 CTO 允许我问他一些问题。CTO 对我的问题进行了耐心详细的解答，而不是一句两句带过。这让我感觉 CTO 是真心希望我能问问题的，而不是出于某些礼貌说的客套话。</p>
+<h2 id="三面-HR"><a href="#三面-HR" class="headerlink" title="三面 (HR)"></a>三面 (HR)</h2><p>和 HR 的聊天集中于待遇和我的需求。HR 给的关于实习薪资就蛮高的，是一些工资的 1.5 ~ 2 倍。（我认为薪资是一种隐私，所以具体数字就不提了）</p>
+<p>另外，同 HR 的聊天中我也了解到这家公司也很注重效率和协作。HR 跟我解释了目前公司使用的协同工具和技术。从这个角度看，在这家公司工作，<strong>沟通不是问题</strong>。</p>
+<p>和 HR 的整体过程很愉快，尤其当 HR 说我有 <strong>极客范</strong> 的时候 ＼(^▽^＠)ノ。真的，这句话足以让我高兴一整天；<strong>对于目前的我来说，这几乎是最大的认可</strong>。并且，这名 HR 是第一个这么评价我的人。</p>
+<h2 id="环境"><a href="#环境" class="headerlink" title="环境"></a>环境</h2><p><strong>这个公司的环境很棒！</strong></p>
+<p>一进门就感觉这很有 google 的风范。办公室边上有零食架，健身器材，以及其它游戏措施。按 HR 的说法，<strong>这是为了让员工专注于手头的任务</strong>。</p>
+<p><img src="https://s9.postimg.org/kjfijydu7/Screen_Shot_2017_03_23_at_23_37_38.png" alt="公司一角"></p>
+<p><img src="https://s10.postimg.org/ro11xzw61/Screen_Shot_2017_03_23_at_23_59_04.png" alt="公司一角"></p>
+<p><img src="https://s21.postimg.org/mr83kbpc7/Screen_Shot_2017_03_24_at_00_01_10.png" alt="公司一角 -- 吃饭啦！"></p>
+<p>另外，在面完 CTO 后，刚好是午饭时间，CTO 和 HR 很友好地请我在公司吃饭。我刚开始出于礼貌而委婉地拒绝了，不过在几次邀请下还是放开吃了。。。嗯，味道不错！ლ(⌒▽⌒ლ)</p>
+<h2 id="谷神星"><a href="#谷神星" class="headerlink" title="谷神星"></a>谷神星</h2><p>首先我表示一下我对这个公司的歉意，因为我迟到了一个小时。以至于到了之后，技术人员有事不在了，所以面试我的反而是一名销售人员。</p>
+<p>销售人员看了简历之后让我介绍自己并讲讲简历上的项目。不过讲到一半时，他打断了对话。他很坦诚的表示，自己只是销售，不懂技术。说罢，还给了我一些建议，比如简历上还是缺少点亮点，说话不够简洁。可能有人觉得这名销售有点无理，但我却不这么认为。从当时销售的语气和表情看，销售确实是出于好意所以打断对话并给我建议，因为我继续讲技术也是对牛弹琴，同时我也确实有表现不好的地方。</p>
+<p>与销售聊完后，HR 与我约好，（当天为周二）过一两天后，我将会与现位于温哥华的一名技术人员进行电话面试。</p>
+<p>周四早上，我与技术人员进行了约好的（微信）电话面试。</p>
+<p>从通话开始，技术便开始提问，首先是关于 <code>Java</code> 的，比如 <code>Spring</code> 的特点。但说实话，我对 <code>Java</code> 并不在行，所以回答得支支吾吾。</p>
+<p>后来又问了一些 <code>JavaScript</code> 的问题，比如 <code>Synchronous vs Asynchronous</code>，<code>Promise</code> 等。因为这与前端相关，所以我比刚才表达更加流利了。</p>
+<p>接着，对 database 又提问了一些，比如 <code>transaction</code>，几条 <code>SQL</code> 语句等。我对数据库只会基本使用，但一些特点却不然。因此这里回答的也很一般。</p>
+<p>最后，技术让我介绍自己做的一个项目。我自然讲了我最近做的那个在线评测系统。</p>
+<p>若让我作个评价，我会说这个技术也确实懂点技术的，对我的提问也明显注重于一些语法的细节和特点。但对我个人如何实现整个项目以及实现项目的能力过问的很少。</p>
+<p>至于我对这个公司的看法，主要是薪资水平太低了。实习生工资也才 3K，而且之前销售还没讲转正后的具体薪资的，只说工资是看实习表现再决定的。初次之外，这个公司并没有专门的前后端，换句话说，我要同时处理前后端认为。这对我来说是不可接受的，毕竟我在之前的一次实习中已经体验过这种开发了。一般这种做法对开发者的负担还是有点大， 不能专心于一件事情之中。因此，我决定拒绝掉这个公司。</p>
+<h1 id="总结"><a href="#总结" class="headerlink" title="总结"></a>总结</h1><p>目前面试了就这几家，剩下几家要么没通知，要么已经预约了面试但还没到时间。如果后续还有面试，我大概会写一篇新的文章来分享自己的经历和想法。</p>
+<p>但就这几家而言，我个人认为面试是可以准备的，某种程度上也类似与应试考试，允许你临时抱佛脚。但，面试的最终表现还是基于你的真实水平的，依你平时的水平已经基本决定了面试的表现。面试前多做些细节准备能增加面试官的好感度，但并不能仅凭借这些就获得面试官的芳心。</p>
+<p>所以，一方面平时必须要做些项目。这些项目最好与你期望的岗位相关，同时最好是具备一定复杂程度的，比如一个单纯的获取在线时间的爬虫是不够的，但如果是一个能够爬多个网站并能根据比较数据给出建议的爬虫则相对高级很多，则可以显得你能组织代码以及分析问题。同时，对于一个较大的项目，最好是能正式上线的，因为这可以体现你有能力维护代码。另外，我个人认为项目的数量不在多，而在精 —- 你有时间写 10 个冒泡排序还不如写 1 个快速排序来提升算法能力。</p>
+<p>至少，我这几个面试基本上是靠项目 <code>在线评测系统</code> 来与面试官进行交流的（或者是说靠”吹”的 ﾍ(￣ ￣;ﾍ)），如果这个项目不够，简历上的实习也基本能充当谈资了。至于另外的几个项目 – 个人博客 之类的，就是用来凑篇幅的 – 面试官很少提它们，我也几乎不会主动靠它们彰显自己的能力。不过，我不得不说我在简历里的一个遗憾，我没有发布过任何一个包 – 无论是 Python 还是 Node.js 。发布一个好用可维护的包已经添加到 2017 的 Todo-List 里了。</p>
+<p>最后，希望我的这篇文章能给大家一些帮助；同时，祝大家都能拿到满意的 Offer。</p>
+<hr>
+<p><img src="https://s27.postimg.org/mpd84np37/49916912_p0.jpg" alt="Pixiv ID: 49916912"></p>
+]]></content>
+    
+    <summary type="html">
+    
+      &lt;h1 id=&quot;背景及摘要&quot;&gt;&lt;a href=&quot;#背景及摘要&quot; class=&quot;headerlink&quot; title=&quot;背景及摘要&quot;&gt;&lt;/a&gt;背景及摘要&lt;/h1&gt;&lt;p&gt;3 月 15 日，浙大玉泉校区举办了一场招聘会，近几百家单位参加。虽然我不是浙大本校生，但是外校学生若携带学生证件也
+    
+    </summary>
+    
+    
+  </entry>
+  
+  <entry>
+    <title>howdoi 源码阅读与分析</title>
+    <link href="https://lazzzis.github.io/hexo-theme-only/2017/03/04/source-code-of-howdoi/"/>
+    <id>https://lazzzis.github.io/hexo-theme-only/2017/03/04/source-code-of-howdoi/</id>
+    <published>2017-03-04T13:49:27.000Z</published>
+    <updated>2017-07-30T05:48:51.000Z</updated>
+    
+    <content type="html"><![CDATA[<p><a href="https://github.com/gleitz/howdoi" target="_blank" rel="external">howdoi</a> – 一款通过命令行帮你从 stackoverflow 中寻找答案的工具，其源代码部分不足 300 行。同时，这份代码被 <a href="http://docs.python-guide.org/en/latest/writing/reading/" target="_blank" rel="external">The Hitchhiker’s Guide to Python!</a> 推荐为适合新手源码阅读的代码。因此，在读完源码后，我分享一下我对这份代码的理解。</p>
+<p>这里采用的版本是 tree 中标号为 <a href="https://github.com/gleitz/howdoi/tree/d84afdee603dbe699153e35650d46ddd734337d1" target="_blank" rel="external">d84afdee60</a> 的那一版</p>
+<h1 id="实现思路"><a href="#实现思路" class="headerlink" title="实现思路"></a>实现思路</h1><p>简单的概括:</p>
+<blockquote>
+<p>获取搜索关键词 –&gt; 通过爬虫找到 stackoverflow 上的答案(html 格式) –&gt; 对 html 进行解析拿到答案</p>
+</blockquote>
+<p><img src="https://s8.postimg.org/nqgt134np/Screen_Shot_2017_03_04_at_22_59_06.png" alt="一副简单的示意图"></p>
+<h2 id="获取关键词"><a href="#获取关键词" class="headerlink" title="获取关键词"></a>获取关键词</h2><p>其中 <strong>关键词</strong> 必须从终端获取，这一步可以通过 Python 自带的包 <code>argparse</code> 实现。</p>
+<p>在代码的第 153 行，<code>args[&#39;query&#39;] = &#39; &#39;.join(args[&#39;query&#39;]).replace(&#39;?&#39;, &#39;&#39;)</code>， 这里作者将关键词中的问号去掉了。刚开始误以为这个处理是怕将问号放到 url 后，问号后面的字符串会变为 url 中查询的参数，从而没有达到使用者的意图。事实上，我的这个想法是错误的，因为之后的代码中，作者会将查询的字符串转义了。我的第二个猜测认为问号会影响 google 查询的结果，因为 <code>?</code> 符号是 google 搜索的指令之一，比如 搜索 <code>c?lor</code> 和 <code>clor</code> 的结果几乎是完全不同的。</p>
+<h2 id="爬虫"><a href="#爬虫" class="headerlink" title="爬虫"></a>爬虫</h2><p>而爬虫部分，则使用包 <strong>requests</strong> ，其中 url 采用的是 google 搜索的 url, <code>&#39;https://www.google.com/search?q=site:{0}%20{1}&#39;</code>。其中 0 位对应搜索的目标网站，而 1 位代表搜索的内容。比如 <code>&#39;https://www.google.com/search?q=site:stackoverflow.com%20python%20async&#39;</code> 代表在 stackoverflow 上搜索有关 <code>python async</code> 的内容，相当于你在 google 的搜索框里输入了 <code>site:stackoverflow python async</code>。其中 site 是 google 搜索的一个指令，其它指令还包括 <code>filetype</code> (制定文件类型)等。</p>
+<p>而 1 的位置填的搜索的内容正是命令行中输入的内容。为了安全起见，最好将其转义，如代码中 95 行所示 <code>result = _get_result(SEARCH_URL.format(URL, url_quote(query)))</code>。假如 <code>query = &#39;foo bar&#39;</code>, 那么转义后 <code>query = &#39;foo%20bar&#39;</code>。</p>
+<h2 id="解析-html"><a href="#解析-html" class="headerlink" title="解析 html"></a>解析 html</h2><p>采用的工具是 <code>pyquery</code>，它可以让使用者像使用 <code>jquery</code> 一样解析 html 代码。</p>
+<p>第一次拿到的 html 是 google 搜索的结果，而不是 stackoverflow 的页面，所以要先拿到有答案的 stackoverflow 的页面。函数 <code>_is_question</code> 帮助程序识别超链接是否是 stackoverflow 的链接。</p>
+<p>如果是 stackoverflow 的链接，那么接下来有一个分支 – 第 151, 152 行。</p>
+<ol>
+<li>用户只需要 url。那么就此打住，将 url 返回即可。</li>
+<li>如果用户需要答案。就对这个链接做一次请求，这一次拿到的 html 就是 stackoverflow 有提问和回答的页面了。为了提高拿到的答案的可靠型，在 153 行，<code>page = _get_result(link + &#39;?answertab=votes&#39;)</code> 使得 stackoverflow 页面返回的结果是根据答案的支持数从高到低排序的。</li>
+</ol>
+<p>拿到页面后，再对 html 分析，这里又有一个分支。如果用户只要代码，拿到 <code>pre</code> 标签内或 <code>code</code> 标签内的内容返回，否则把答案的文本全部返回。</p>
+<h2 id="其它"><a href="#其它" class="headerlink" title="其它"></a>其它</h2><p>以下几个部分即使删去，也并不也影响程序的主要功能。但加上的话可以很好的改善用户体验。</p>
+<h3 id="代理"><a href="#代理" class="headerlink" title="代理"></a>代理</h3><p>对应函数 <code>get_proxies</code>。其中作者还为没有用 http 开头的网址加了 http，比如 <code>{&#39;http&#39;: &#39;localhost:1080&#39;}</code> 会转化为 <code>{&#39;http&#39;: &#39;http://localhost:1080&#39;}</code>。</p>
+<h3 id="缓存"><a href="#缓存" class="headerlink" title="缓存"></a>缓存</h3><p>如果开启缓存而且搜索次数多了，缓存可以很好地改善用户体验。作者的实现采用了 <code>requests_cache</code>。使用也挺简单的，不多说了，可以参考<a href="https://github.com/reclosedev/requests-cache" target="_blank" rel="external">文档</a>。</p>
+<h3 id="颜色输出"><a href="#颜色输出" class="headerlink" title="颜色输出"></a>颜色输出</h3><p>这也是改善用户体验的一个途径。作者采用的是 <a href="http://pygments.org/" target="_blank" rel="external">pygments</a> 。用 pygments 提供的 lexer 对字符串解析并加上颜色。</p>
+<h1 id="代码风格"><a href="#代码风格" class="headerlink" title="代码风格"></a>代码风格</h1><p>这里讲一些我从这份源码中比较有启发的代码风格</p>
+<h2 id="私有函数"><a href="#私有函数" class="headerlink" title="私有函数"></a>私有函数</h2><p>Python 中并没有严格意义上的 私有函数，一般来讲，名字以但下划线开头的即为 <strong>不推荐调用</strong> 的函数，也可以认为属于私有函数。而观察这个项目以前的代码，可以发现最早并没有私有函数。私有函数的出现起于 <a href="https://github.com/gleitz/howdoi/pull/132" target="_blank" rel="external">Pull Request: PEP 8 conventions #132</a>。个人认为区分私有和公有的区分对于使用者的学习还是有帮助的，尤其是文档不多或者使用者比较着急使用的情况下，使用者可以直接看公有函数。另外，公有函数也警告使用者不要随意调用，因为有些私有函数的随意调用可能会造成一些对项目比较危险的结果。</p>
+<h2 id="函数的顺序"><a href="#函数的顺序" class="headerlink" title="函数的顺序"></a>函数的顺序</h2><p>不知是无意还是有意，函数的顺序根据调用的顺序逆序排列。比如我们从 <code>command_line_runner</code> 看起，这个函数第一个出现的调用是 <code>get_parser</code>，而源码中 <code>command_line_runner</code> 的上一个函数就是 <code>get_parser</code>。继续往下看，则可以看到 <code>_clear_cache</code>, <code>_enable_cache</code>。而这个顺序刚好是你从文件尾往文件头看得顺序。也就是说，每次我看到一个函数调用时，我肯定往上翻就行了，而且越先看到的越先出现，这给阅读源码带来了很大的便利。</p>
+<h2 id="常量"><a href="#常量" class="headerlink" title="常量"></a>常量</h2><p>我发现这里的常量包括了作为模板的字符串，如 <code>SEARCH_URL = &#39;https://www.google.com/search?q=site:{0}%20{1}&#39;</code>。仔细想想，我好像以前写常量都是固定的字符串或数字，这种模板型的字符串常量我好像一直没用过。</p>
+<h1 id="小细节"><a href="#小细节" class="headerlink" title="小细节"></a>小细节</h1><p><code>URL = os.getenv(&#39;HOWDOI_URL&#39;) or &#39;stackoverflow.com&#39;</code></p>
+<p>注意这里用的 stackoverflow 地址是 <code>stackoverflow.com</code>  而不是 <code>www.stackoverflow.com</code>。这是有区别的。使用前者搜索，出来的 stackoverflow 相关链接大多是 <code>stackoverflow.com/problems/(\d+)/</code> 形式，而使用后者，大多出现的是 <code>www.stackoverflow.com/a/(\d+)/</code> 形式。前者的形式相对后者的形式更容易判断一个链接是不是 stackoverflow 的问题链接。</p>
+<h1 id="后记"><a href="#后记" class="headerlink" title="后记"></a>后记</h1><p>howdoi 的点子很好，而且源码确实比较易懂。读完源码之后，建议可以自己试着实现一个类似的或用其它语言复刻一个。毕竟，有些问题是只有开发时才能想到的。</p>
+]]></content>
+    
+    <summary type="html">
+    
+      &lt;p&gt;&lt;a href=&quot;https://github.com/gleitz/howdoi&quot; target=&quot;_blank&quot; rel=&quot;external&quot;&gt;howdoi&lt;/a&gt; – 一款通过命令行帮你从 stackoverflow 中寻找答案的工具，其源代码部分不足 300 行。同
+    
+    </summary>
+    
+    
+      <category term="Python" scheme="https://lazzzis.github.io/hexo-theme-only/tags/Python/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>Python 对函数默认参数的处理</title>
+    <link href="https://lazzzis.github.io/hexo-theme-only/2017/01/16/default-para-in-python/"/>
+    <id>https://lazzzis.github.io/hexo-theme-only/2017/01/16/default-para-in-python/</id>
+    <published>2017-01-16T12:13:49.000Z</published>
+    <updated>2017-07-30T05:48:51.000Z</updated>
+    
+    <content type="html"><![CDATA[<p>Python 对函数默认参数的处理</p>
+<p>一个以可变对象为默认参数的函数:</p>
+
+    <pre><code class="lang-Python"><span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">A</span>:</span>
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">__init__</span><span class="hljs-params">(self)</span>:</span>
+        self.x = <span class="hljs-number">1</span>
+        print(<span class="hljs-string">'created'</span>)
+
+<span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">f</span><span class="hljs-params">(a = A<span class="hljs-params">()</span>)</span>:</span>
+    a.x += <span class="hljs-number">1</span>
+    print(a.x)
+<span class="hljs-comment"># output: created</span>
+f() <span class="hljs-comment"># output: 2</span>
+f() <span class="hljs-comment"># output: 3</span>
+</code></pre>
+<p>从结果可以看出，Python 在解析时便已经创建好了默认参数 a 的值。函数 f 在调用时采用了同一个对象，而不是每次调用时重新创建新的对象。这一点与 <code>C++</code> 的处理方式不同。</p>
+<h1 id="f-defaults"><a href="#f-defaults" class="headerlink" title="f.__defaults__"></a><code>f.__defaults__</code></h1><p>在 Python 中，函数属于一等公民(first-class)。函数可当作一个对象，拥有自己的属性与方法。而默认参数则存在与函数的一个属性中。</p>
+
+    <pre><code class="lang-Python"><span class="hljs-selector-tag">In</span> <span class="hljs-selector-attr">[28]</span>: <span class="hljs-selector-tag">def</span> <span class="hljs-selector-tag">f</span>(a, b=<span class="hljs-number">1</span>):
+       <span class="hljs-selector-tag">2</span>     <span class="hljs-selector-tag">pass</span>
+
+
+<span class="hljs-selector-tag">In</span> <span class="hljs-selector-attr">[29]</span>: <span class="hljs-selector-tag">f</span><span class="hljs-selector-class">.__defaults__</span>
+<span class="hljs-selector-tag">Out</span><span class="hljs-selector-attr">[29]</span>: (<span class="hljs-number">1</span>, [])
+</code></pre>
+<p>Python 在解析代码时，便会将默认参数存于 <code>f.__defaults__</code> 中。</p>
+<p>在 CPython 的 (funcobject.h)[<a href="https://github.com/python/cpython/blob/master/Include/funcobject.h" target="_blank" rel="external">https://github.com/python/cpython/blob/master/Include/funcobject.h</a>] 中也可以看到，<code>PyFunctionObject</code> 的一个属性便是 <code>func_defaults</code>, 对应 Python 中每个函数中的 <code>__defaults__</code> 属性</p>
+<h1 id="默认参数-与-闭包"><a href="#默认参数-与-闭包" class="headerlink" title="默认参数 与 闭包"></a>默认参数 与 闭包</h1><p>以下是一个经常被提起的关于理解闭包的一段代码</p>
+
+    <pre><code class="lang-python"><span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">test</span><span class="hljs-params">()</span>:</span>
+    lst = []
+    <span class="hljs-keyword">for</span> i <span class="hljs-keyword">in</span> range(<span class="hljs-number">5</span>):
+        lst.append(<span class="hljs-keyword">lambda</span> x: x * i)
+    <span class="hljs-keyword">return</span> lst
+
+
+lst = test()
+[f(<span class="hljs-number">1</span>) <span class="hljs-keyword">for</span> f <span class="hljs-keyword">in</span> lst]
+<span class="hljs-comment"># Output: [4, 4, 4, 4, 4]</span>
+</code></pre>
+<p>在这里中，匿名函数中的变量 <code>i</code> 并没有在声明时便被求值，而是在匿名函数被调用时才被求值。因为 <code>i</code> 来自于 <code>test</code> 函数，且在匿名函数被调用时，循环已经结束，所以 <code>i</code> 的值已经变成 4。</p>
+<p>但如果想让 <code>i</code> 在匿名函数声明时便被求值该如何做呢？<br>以下代码便借助默认参数解决问题:</p>
+
+    <pre><code class="lang-python"><span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">test</span><span class="hljs-params">()</span>:</span>
+    lst = []
+    <span class="hljs-keyword">for</span> i <span class="hljs-keyword">in</span> range(<span class="hljs-number">5</span>):
+        lst.append(<span class="hljs-keyword">lambda</span> x, i=i: x * i)
+    <span class="hljs-keyword">return</span> lst
+
+lst = test()
+
+[f(<span class="hljs-number">1</span>) <span class="hljs-keyword">for</span> f <span class="hljs-keyword">in</span> lst]
+<span class="hljs-comment"># Output: [0, 1, 2, 3, 4]</span>
+</code></pre>
+<p>与第一段代码相比，第二段代码中的 <code>i</code> 在匿名函数声明时就被求值，而且因此，每个匿名函数拥有的默认参数 <code>i</code> 的值都不相同。这样解决了问题。</p>
+<h1 id="参考"><a href="#参考" class="headerlink" title="参考"></a>参考</h1><ol>
+<li><a href="https://github.com/python/cpython/blob/master/Include/funcobject.h" target="_blank" rel="external">funcobject.h</a></li>
+<li><a href="http://stackoverflow.com/questions/10120974/where-is-the-default-parameter-in-python-function" target="_blank" rel="external">Where is the default parameter in Python function</a></li>
+<li><a href="http://effbot.org/zone/default-values.htm" target="_blank" rel="external">Default Parameter Values in Python</a></li>
+</ol>
+]]></content>
+    
+    <summary type="html">
+    
+      &lt;p&gt;Python 对函数默认参数的处理&lt;/p&gt;
+&lt;p&gt;一个以可变对象为默认参数的函数:&lt;/p&gt;
+
+    &lt;pre&gt;&lt;code class=&quot;lang-Python&quot;&gt;&lt;span class=&quot;hljs-class&quot;&gt;&lt;span class=&quot;hljs-keyword&quot;&gt;cla
+    
+    </summary>
+    
+    
+      <category term="Python" scheme="https://lazzzis.github.io/hexo-theme-only/tags/Python/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>初看 CPython</title>
+    <link href="https://lazzzis.github.io/hexo-theme-only/2017/01/04/a-glance-at-cpython/"/>
+    <id>https://lazzzis.github.io/hexo-theme-only/2017/01/04/a-glance-at-cpython/</id>
+    <published>2017-01-04T12:24:13.000Z</published>
+    <updated>2017-07-30T05:48:51.000Z</updated>
+    
+    <content type="html"><![CDATA[<h1 id="什么是-CPython"><a href="#什么是-CPython" class="headerlink" title="什么是 CPython"></a>什么是 CPython</h1><p>简单的说, <code>CPython</code> 是 Python 解释器的一个实现。换句话说，Python 解释器是由 C 写的，然后由 GCC 之类的编译器编译而成的可执行文件。除了 CPython，还有 <a href="http://pypy.org/" target="_blank" rel="external">PyPy</a>(用 Python 实现的 Python 解释器)，<a href="http://www.skulpt.org/" target="_blank" rel="external">Skulpt</a>(用 JavaScript 实现的 Python 解释器) 等等。如果你不知道你用的是哪一个，那么你一定用的就是 CPython。因为 CPython 是 Python 官方的解释器实现，其它均属于第三方实现。</p>
+<h1 id="从源码到运行"><a href="#从源码到运行" class="headerlink" title="从源码到运行"></a>从源码到运行</h1><p>对于从 Python 源码到解释器执行它们的这个过程，我把它分为两大步 —— 编译(Compiling) 与 解释(Interpreting)。</p>
+<h2 id="编译"><a href="#编译" class="headerlink" title="编译"></a>编译</h2><p>尽管 Python 一门典型的解释型语言 —— 与编译型语言(C, C++) 相对，但 Python 的运行确实涉及到了编译的部分。</p>
+<p>编译在这里的主要功能是将源代码转换为字节码，包括编译了原理中两个关键步骤，词法分析与语法分析，即 lexing, parsing, 也包含了语法检查，即 <code>SyntaxError</code> 可能在这个过程中抛出。</p>
+<p>而由 Python 编译而来的字节码似于如下:</p>
+<pre><code>  1           0 LOAD_NAME                0 (print)
+              2 LOAD_CONST               0 (&#39;hello world&#39;)
+              4 CALL_FUNCTION            1
+              6 POP_TOP
+              8 LOAD_CONST               1 (None)
+             10 RETURN_VALUE
+</code></pre><p>关于字节码的内容，后面将进一步讨论</p>
+<h2 id="解释"><a href="#解释" class="headerlink" title="解释"></a>解释</h2><p>在这一步，Python 解释器对编译生成的字节码进行解释。且在实际过程中，编译所做的只占很少一部分，也就是说：解释的部分远大于编译的部分 —— 这也是为什么 Python 仍被成为解释型语言的重要原因之一。</p>
+<p>因为 Python 解释器对字节码而非源码进行解释，因此 Python 解释器也会被称为 Python 虚拟机(Python Virtual Machine / PVM)。特别需要指出，尽管 Python 虚拟机与 Java 虚拟机都被称为虚拟机，但两者内部之间仍有较大差别(可以参考<a href="https://www.zhihu.com/question/23727114" target="_blank" rel="external">link</a>)。</p>
+<h2 id="字节码的意义"><a href="#字节码的意义" class="headerlink" title="字节码的意义"></a>字节码的意义</h2><p><strong>为什么不直接解释源码？</strong><br>实际上，直接解释源码在理论上当然是可行的。但这样做也有一些缺点。<br>举个例子:</p>
+<pre><code>def test(x, y):
+    if x &lt; y:
+        return 1
+    elif x == y:
+        return 2
+    return 3
+</code></pre><p>如果直接解释源码，那么你每次执行 test 函数都要对函数体重新分析，也就要依次分析出 <code>if</code> 语块，<code>if</code> 条件部分。等结构分析好了，之后，才能对 x, y 取值进行比较。</p>
+<p>但事实上，代码一旦写好，结构不会再变，会变的只是变量的取值。那么可以先对其编译，编译好后再解释就不需要每次重新分析结构，而是可以直接就对 x, y 进行取值比较。从这个角度讲，编译成字节码提高了解释器的效率。</p>
+<p>其次，字节码的存在类似于汇编的存在。汇编介于 C 语言与硬件之间，作为抽象的中间层用于降低开发的复杂度。Python 中的字节码也是如此。</p>
+<h1 id="字节码指令集"><a href="#字节码指令集" class="headerlink" title="字节码指令集"></a>字节码指令集</h1><h2 id="查看字节码"><a href="#查看字节码" class="headerlink" title="查看字节码"></a>查看字节码</h2><p>Python 提高 <code>dis</code> 模块供用户查看由 Python 源码编译而成的字节码。</p>
+<p>假设下列代码是 <code>test.py</code> 中的全部内容:</p>
+
+    <pre><code class="lang-python"><span class="hljs-attr">x</span> = <span class="hljs-number">1</span>
+<span class="hljs-attr">y</span> = <span class="hljs-number">2</span>
+<span class="hljs-attr">z</span> = x + y
+</code></pre>
+<p>在终端中输入</p>
+
+    <pre><code class="lang-bash">python -<span class="hljs-keyword">m</span> <span class="hljs-keyword">dis</span> <span class="hljs-keyword">test</span>.py
+</code></pre>
+<p>可以看到输出的字节码:</p>
+<pre><code>  1           0 LOAD_CONST               0 (1)
+              3 STORE_NAME               0 (x)
+
+  2           6 LOAD_CONST               1 (2)
+              9 STORE_NAME               1 (y)
+
+  3          12 LOAD_NAME                0 (x)
+             15 LOAD_NAME                1 (y)
+             18 BINARY_ADD
+             19 STORE_NAME               2 (z)
+             22 LOAD_CONST               2 (None)
+             25 RETURN_VALUE
+</code></pre><p>其中每一列代表的含义为:</p>
+<pre><code>行号            字节码偏移量     字节码指令        指令参数          对于参数的相关说明
+   1             0            LOAD_CONST        0               (1)
+</code></pre><h2 id="解释字节码"><a href="#解释字节码" class="headerlink" title="解释字节码"></a>解释字节码</h2><p>Python 解释器对字节码指令进行解释，同时对 <strong>栈</strong> (Stack)进行操作 —- Python 虚拟机属于 <strong>栈机器</strong> (Stack machine)。值的存取都是基于栈来实现的。类似下图:<br><img src="https://markfaction.files.wordpress.com/2012/07/stackadd.png" alt="7 + 20 的实现过程: 将读到的7 与 20存放与栈中，然后取出相加, 并将结果放入栈中"></p>
+<p><strong>栈机器</strong> 优于 <strong>寄存器机器</strong>(Register Virtual Machine) 的一个地方是不需要对地址的存取，数据的读取通过 POP 和 PUSH 的到，而非通过一个寄存器地址，操作上相对简单。</p>
+<h3 id="字节码指令集有哪些"><a href="#字节码指令集有哪些" class="headerlink" title="字节码指令集有哪些"></a>字节码指令集有哪些</h3><p>所有的指令码可以在这个网页中看到: <a href="https://hg.python.org/cpython/file/v2.7.8/Include/opcode.h" target="_blank" rel="external">https://hg.python.org/cpython/file/v2.7.8/Include/opcode.h</a>。这里以网上资料比较多的 2.7.8 为例。从 0 – 147 共148个指令，每个指令都对应特定的功能。任何 Python 源码编译后形成的字节码都可以在这其中找到。</p>
+<h3 id="字节码从哪里被执行"><a href="#字节码从哪里被执行" class="headerlink" title="字节码从哪里被执行"></a>字节码从哪里被执行</h3><p>仍以 2.7.8 为例，查看 CPython 工程的 Python/ceval.c 文件: <a href="https://hg.python.org/cpython/file/v2.7.8/Python/ceval.c" target="_blank" rel="external">https://hg.python.org/cpython/file/v2.7.8/Python/ceval.c</a>。<br>第 964 行处有一个 <code>for (;;)</code> 语句块，负责不断读入每一条指令并执行。</p>
+<p>继续往下看，第 1112 行有一个“庞大”的 <code>switch</code> 语块。负责检查每一条指令具体是哪一条指令，然后采取对应的操作。</p>
+<p>以 1148 行的 <code>POP_TOP</code> 为例:</p>
+
+    <pre><code class="lang-c">case POP_TOP:
+    v = POP()<span class="hljs-comment">;</span>
+    Py_DECREF(v)<span class="hljs-comment">;</span>
+    goto fast_next_opcode<span class="hljs-comment">;</span>
+</code></pre>
+<p>对应的操作可描述为: 取并弹出栈顶的数据，对这个数据的计数器减一，执行下一条指令。</p>
+<p>CPython 便是以此循环，直到因为用户终止等原因才停止运行。</p>
+<h1 id="后续"><a href="#后续" class="headerlink" title="后续"></a>后续</h1><p>目前这是一篇极其浅显的对 CPython 的描述。我最近正在学习和研究 CPython 的源码。如果有新的理解，我会继续更新。</p>
+<h1 id="参考"><a href="#参考" class="headerlink" title="参考"></a>参考</h1><ol>
+<li><a href="https://youtu.be/HVUTjQzESeo" target="_blank" rel="external">Allison Kaptur - Bytes in the Machine: Inside the CPython interpreter - PyCon 2015</a></li>
+<li><a href="https://youtu.be/LhadeL7_EIU?list=PLzV58Zm8FuBL6OAv1Yu6AwXZrnsFbbR0S" target="_blank" rel="external">CPython internals - Interpreter and source code overview</a></li>
+<li><a href="https://markfaction.wordpress.com/2012/07/15/stack-based-vs-register-based-virtual-machine-architecture-and-the-dalvik-vm/" target="_blank" rel="external">Stack based vs Register based Virtual Machine Architecture, and the Dalvik VM</a></li>
+<li><a href="http://stackoverflow.com/questions/441824/java-virtual-machine-vs-python-interpreter-parlance" target="_blank" rel="external">Java “Virtual Machine” vs. Python “Interpreter” parlance?</a></li>
+</ol>
+]]></content>
+    
+    <summary type="html">
+    
+      &lt;h1 id=&quot;什么是-CPython&quot;&gt;&lt;a href=&quot;#什么是-CPython&quot; class=&quot;headerlink&quot; title=&quot;什么是 CPython&quot;&gt;&lt;/a&gt;什么是 CPython&lt;/h1&gt;&lt;p&gt;简单的说, &lt;code&gt;CPython&lt;/code&gt; 是 Pytho
+    
+    </summary>
+    
+    
+      <category term="Python" scheme="https://lazzzis.github.io/hexo-theme-only/tags/Python/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>2016 -&gt; 2017</title>
+    <link href="https://lazzzis.github.io/hexo-theme-only/2016/12/20/the-end-of-2016/"/>
+    <id>https://lazzzis.github.io/hexo-theme-only/2016/12/20/the-end-of-2016/</id>
+    <published>2016-12-20T13:12:15.000Z</published>
+    <updated>2017-07-30T05:48:51.000Z</updated>
+    
+    <content type="html"><![CDATA[<p>（叹气）又是一年。</p>
+<h1 id="时间花在哪里了？"><a href="#时间花在哪里了？" class="headerlink" title="时间花在哪里了？"></a>时间花在哪里了？</h1><p>这是我从大三到大四的一年，也是从课多到课少的一年。所以自由安排的时间相对多了很多。</p>
+<p>上半年的学期少部分时间花在课程上，大约一星期上 3 次课左右。</p>
+<p>下半年的学期除了一个时长 3 周的由学校强制学生参加的生产实习外，其余时间为自由时间。</p>
+<p>大部分时间花在了准备 GRE、TOEFL 考试，以及学校的申请上了。这个时间段从 3 月持续到了 12 月。</p>
+<p>花在代码上的时间少了很多。因为准备语言考试和学习代码这两件事，发生了冲突，所以我不得不大大压缩了花在计算机知识学习上的时间，包括暑假里的两个月里我用在代码上的时间可能不超过几天。大概从 11 月开始，我才渐渐将时间放回到计算机知识的学习上。</p>
+<h1 id="我做了什么？"><a href="#我做了什么？" class="headerlink" title="我做了什么？"></a>我做了什么？</h1><p>记录了对我印象比较深或对我比较有意义的事件:</p>
+<ul>
+<li>购买了 MacBook Pro(Retina)</li>
+<li>考了二次 GRE 和 三次 TOEFL</li>
+<li>完成并发布了一个 hexo 的主题</li>
+<li>目前已学习了 <em>Stucture and Interpretation of Computer Program</em> 的约 70%</li>
+<li>目前已完成了美国研究生院共计 11 个项目的申请</li>
+</ul>
+<p><img src="https://s24.postimg.org/utgjkq5xh/IMG_0840.jpg" alt="购买的 MacBook Pro(Retina)"></p>
+<h1 id="我后悔什么？"><a href="#我后悔什么？" class="headerlink" title="我后悔什么？"></a>我后悔什么？</h1><p>尽管人生没有后悔药，但前车之鉴 后事之师，希望我自己不会在下一年也后同样的悔:</p>
+<ul>
+<li>后悔我自己在第三次考 TOEFL 时没有稳住情绪</li>
+<li>后悔对我曾经喜欢过的人说了难听的话</li>
+<li>后悔错过了参加在杭州的举办的 hackathon</li>
+<li>后悔在这一年中没有参加任何一次漫展</li>
+</ul>
+<h1 id="我选择什么"><a href="#我选择什么" class="headerlink" title="我选择什么?"></a>我选择什么?</h1><h2 id="我选择放弃考研"><a href="#我选择放弃考研" class="headerlink" title="我选择放弃考研"></a>我选择放弃考研</h2><p>这是我在之前一直没有想到的，因为当我还是大一大二时，每当有人问我未来的出路，我总是会毫不犹豫的回答：我要考研。</p>
+<p>但直到大三，我才考虑我之前为什么会这么认为，我想到了三个原因：</p>
+<ol>
+<li>我所在的学院是学校的荣誉学院，大部分人都很爱学习，然后在加上历来这个学院就以颇高的考研率著称，辅导员等人又重复此事实，暗示着同学们应该去考研。因此我受到了一定影响，认为我自己也应考研。</li>
+<li>在大一大二一方面认识到工作并不一定是自由的，另一方面认识到自己能力上的不足，需要更进一步的学习，所以我至少放弃了毕业后工作。</li>
+<li>我压根就没考虑过除了考研和工作之后的选择！！！这是重点，在进入大学后，我无意识地假设了自己只有这两个选择，因此在排除工作后，自然而然地以为应该选择考研。</li>
+</ol>
+<h2 id="我选择申请美国的研究生院"><a href="#我选择申请美国的研究生院" class="headerlink" title="我选择申请美国的研究生院"></a>我选择申请美国的研究生院</h2><p>这个决定也不是凭空得来的，包括了外因的推动:</p>
+<ol>
+<li>自从科学上网后，我在互联网上更直接地了解到了外面的世界，这其中就包括了教育。我直接或间接地接触到了留学生，也了解到了在外面读书的好处，因此开始思考我自己在这方面的可行性。</li>
+<li>我亲戚中这几年也有人出国，同时父母虽然有点担忧，但也不完全反对，因此我算是在家庭和亲戚边得到了一定的支持。</li>
+<li>周围的人也有选择走这条路，顿时觉得自己不是一个人在战斗。</li>
+</ol>
+<h1 id="我还要做什么"><a href="#我还要做什么" class="headerlink" title="我还要做什么"></a>我还要做什么</h1><h2 id="学习"><a href="#学习" class="headerlink" title="学习"></a>学习</h2><p><strong>假如哪天我放弃了学习，那要么是我死了，要么就是我颓废得无药可救了</strong></p>
+<p>英语和计算机知识就不用说了，这是我赖以生存的必备之物，必须坚持学习。</p>
+<p>我还希望我能学习乐理知识。我喜欢音乐，因此我也想试着去了解它。同时，我最近迷上了<code>电子管风琴</code>（又称<code>双琴键电子琴</code>），希望我将来能在闲暇之余自由地在电子管风琴上弹奏自己的曲子。</p>
+<h2 id="了解现实的世界"><a href="#了解现实的世界" class="headerlink" title="了解现实的世界"></a>了解现实的世界</h2><p>是的，我一直觉得我还是很宅。我的身体素质很一般，也只是刚刚能过体侧的水平而已，说不上强壮。我也渐渐感觉到体力不足带给我的麻烦。在今年最后一个月，我在同伴的鼓励下办了张健身卡，现在每天都会去。希望我能坚持下去，让自己拥有一个更强壮的身体。</p>
+<p>另外，我对这个社会了解得太少，至少是对中国社会了解地太少。毕竟我在未来总归是要在社会上打拼的，我还是希望能多看看这个社会，了解这个社会的光明与黑暗。</p>
+<h2 id="了解未来"><a href="#了解未来" class="headerlink" title="了解未来"></a>了解未来</h2><p><strong>毕业前的一段时间是迷茫的时期</strong></p>
+<p>尽管我已经初步规划了未来一两年的安排，但事实是我该如何看待更久远的安排。未来实在是有太多的不确定因素，我看不清我现在的选择是不是最好的选择，我真得要用时间来证明我的选择么？</p>
+<p><img src="https://s24.postimg.org/snocz2spx/Screen_Shot_2016_12_15_at_23_16_49.png" alt="《蒲公英之路》：永不会再踌躇"></p>
+<h1 id="总评"><a href="#总评" class="headerlink" title="总评"></a>总评</h1><p>如果满分是 5 分的话，我会给这一年的自己打 2.5 分。原因是相比以往，这一年的自己确实很一般：普通地学习，普通地考试，普通地敲代码。虽然做地不算差，但也绝对不算优秀。</p>
+<hr>
+<p><img src="https://s23.postimg.org/rvpndu597/15447116_p0.jpg" alt="Merry X&#39;mas (Pixiv ID: 15447116)"></p>
+]]></content>
+    
+    <summary type="html">
+    
+      &lt;p&gt;（叹气）又是一年。&lt;/p&gt;
+&lt;h1 id=&quot;时间花在哪里了？&quot;&gt;&lt;a href=&quot;#时间花在哪里了？&quot; class=&quot;headerlink&quot; title=&quot;时间花在哪里了？&quot;&gt;&lt;/a&gt;时间花在哪里了？&lt;/h1&gt;&lt;p&gt;这是我从大三到大四的一年，也是从课多到课少的一年。所以自由
+    
+    </summary>
+    
+      <category term="kny" scheme="https://lazzzis.github.io/hexo-theme-only/categories/kny/"/>
+    
+    
+  </entry>
+  
+  <entry>
+    <title>延迟计算: 关于 Python 的 yield</title>
+    <link href="https://lazzzis.github.io/hexo-theme-only/2016/12/12/python-yield-and-delay/"/>
+    <id>https://lazzzis.github.io/hexo-theme-only/2016/12/12/python-yield-and-delay/</id>
+    <published>2016-12-12T13:07:06.000Z</published>
+    <updated>2017-07-30T05:48:51.000Z</updated>
+    
+    <content type="html"><![CDATA[<p>在 SICP 第 3 章中，有一段部分内容是以 stream 为核心而展开的。而 stream 的特点就是 lazy evaluation / delayed evaluation （惰性求值 / 延迟计算）。在接触 stream 之时，我便立即联想到 Python 具有类似的功能 — <code>yield</code>。</p>
+<h1 id="yield-的意义"><a href="#yield-的意义" class="headerlink" title="yield 的意义"></a>yield 的意义</h1><p>使用 yield 的目的是为了生成器，而使用生成器的一个特点是每次只向你返回一个结果。基于这个特点，生成器可以产生的结果数量甚至可以是无限的。因此，生成器在用于表示一些 <code>list</code> 不便或无法表示的超多元素的集合时将表现出很好的便捷性。</p>
+<p>例如:</p>
+
+    <pre><code class="lang-python"><span class="hljs-keyword">In</span> [68]: def fib():
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:     former, latter = 0, 1
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:     yield former
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:     yield latter
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:     <span class="hljs-keyword">while</span> <span class="hljs-literal">True</span>:
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:         former, latter = latter, latter + former
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:         yield latter
+
+<span class="hljs-keyword">In</span> [69]: select = lambda x :x <span class="hljs-keyword">and</span> x % 1377 == 0
+
+<span class="hljs-keyword">In</span> [70]: <span class="hljs-keyword">for</span> i, item <span class="hljs-keyword">in</span> enumerate(fib()):
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:     <span class="hljs-keyword">if</span> select(item):
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:         <span class="hljs-builtin-name">print</span>(i, item)
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:         break
+</code></pre>
+<p>在这里，我先定义了一个生成器函数 fib，用于生成 fibonacci 数列，以及另一个普通函数 select，用于筛选出能被 1377 整除的数。接着用一个循环找出第一个满足 select 的条件的数。在这里，使用生成器的好处是你不需要实现估计需要计算多少个 fibonacci 数列中的元素。因为 fib() 可以产生第无穷个 fibonacci 数列中的元素，加入你换成一个 <code>list</code>：</p>
+
+    <pre><code class="lang-python"><span class="hljs-keyword">In</span> [70]: <span class="hljs-keyword">for</span> i, item <span class="hljs-keyword">in</span> enumerate(fib_lst):
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:     <span class="hljs-keyword">if</span> select(item):
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:         <span class="hljs-builtin-name">print</span>(i, item)
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:         break
+</code></pre>
+<p>这里就有一个明显的顾虑：fib_lst 中应该放多少个元素？放 100 个够不够？1000 个呢？10000 个呢？</p>
+<p>假使你运气好，发现对于例子中 select 函数， 1000 个够了，但如果更改 select 为 <code>lambda x: x and x % 3119 == 0</code>。那么 1000 个还会够么。可能需要 10000 个。同时，你每次生成 10000 个甚至 1000000 个元素的列表，那么生成和保存一个如此大的列表在时间上和空间上会使巨大的浪费。而相比于此，生成器没有保存所有元素，因此至少在空间上有极大的便利。</p>
+<h2 id="Q：不用生成器，不也有办法达到类似的效果么？"><a href="#Q：不用生成器，不也有办法达到类似的效果么？" class="headerlink" title="Q：不用生成器，不也有办法达到类似的效果么？"></a>Q：不用生成器，不也有办法达到类似的效果么？</h2><p>或许有人会举出这么一个反例，既然 fib() 函数产生的生成器只是每次临时计算而已，那不用列表或生成器不也有办法可以很方便么？例如:</p>
+
+    <pre><code class="lang-python"><span class="hljs-keyword">In</span> [63]: former, latter = 0, 1
+
+<span class="hljs-keyword">In</span> [64]: i = 2
+
+<span class="hljs-keyword">In</span> [65]: <span class="hljs-keyword">while</span> <span class="hljs-literal">True</span>:
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:     former, latter = latter, former + latter
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:     <span class="hljs-keyword">if</span> select(latter):
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:         <span class="hljs-builtin-name">print</span>(i, latter)
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:         break
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:     i += 1
+</code></pre>
+<p>虽然这个方法也可以，但是仔细想想，这个方法的可读性和可移植性说不上很好。一个原因是在进行 select 的代码中糅合了 fibonacci 数列元素计算的过程，使得逻辑上分离的两个部分连在了一起。另一个原因是，生成器将 fibonacci 数列的元素进行了封装，那么在其他模块中也只需要用 fib() 即可调用；而在这个方法中，每一次计算 fibonacci 数列都需要重新写一遍计算的代码，欠缺方便。</p>
+<h2 id="写法优化"><a href="#写法优化" class="headerlink" title="写法优化"></a>写法优化</h2><p>在上例中，我用一个简单的循环求得了第一个满足要求的元素。而在 Python 中，大多简单的循环又可以写成类似列表表达式的方式，而上一个例子也是如此。</p>
+
+    <pre><code class="lang-python">In [<span class="hljs-number">74</span>]: next((<span class="hljs-selector-tag">i</span>, item) <span class="hljs-keyword">for</span> <span class="hljs-selector-tag">i</span>, item <span class="hljs-keyword">in</span> enumerate(fib()) <span class="hljs-keyword">if</span> select(item))
+</code></pre>
+<p>在这里，<code>(i, item) for i, item in enumerate(fib()) if select(item)</code> 本身代表了一个生成器表达式</p>
+<pre><code>In [77]: ((i, item) for i, item in enumerate(fib()) if select(item))
+Out[77]: &lt;generator object &lt;genexpr&gt; at 0x104674258&gt;
+
+In [78]: gen = ((i, item) for i, item in enumerate(fib()) if select(item))
+
+In [79]: next(gen)
+Out[79]:
+(1316,
+ 47670484598039529967308137755285220283067857159635666308572483292852087741971817495430736032322993914141991666526048221816855193212853932963317951773586445466676607895893764927922577383975888691399916203755485478472365658305444586740978034474331219811230599774368887776557837)
+
+In [80]: next(gen)
+Out[80]:
+(2632,
+ 5081408804827217679483690811505190320468896152614650981083661467793773636093281628433780640132913496539149358258875736128851767346736337537150191351612842042674073125589815465376413058371692145091298387648676549040287922078680500401041910184918357118604215905739580720823641807065276860800035024575275858699179043965222324466320661415297713837965844699076750589037980732572303226178214876864049241381018710405651898072419680038625628403496847878874630005198585018290768191523976457263007140359513843497547268641482458809531359561789398938836874997259)
+</code></pre><p>如代码所示，这个表达式可以用于一直求下一个满足要求的数子，也可以认为是求第无限个满足要求的数字。这样的写法也与上面的例子的类似的道理，要用的时候再计算，要多少算多少。避免一次性算太多而带来的在时间上的延迟和内存上的紧张。</p>
+<h1 id="yield-的暂停"><a href="#yield-的暂停" class="headerlink" title="yield 的暂停"></a>yield 的暂停</h1><p>尽管在 yield 的帮助下可以产生近似无限长的列表，但这也并不是说生成器可以一直下去: 在有些情况下，我们还是希望 yield 能在某个条件下停下。而如果在生成器函数中使用了 <code>return</code>，那么 <code>return</code> 即意味这暂停。</p>
+<p>例如，我们在每次做一次数学测试，一直生成随机数，直至满足某个条件为止。</p>
+
+    <pre><code class="lang-python"><span class="hljs-keyword">In</span> [81]: def random_test(select, start, end):
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:     <span class="hljs-keyword">while</span> <span class="hljs-literal">True</span>:
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:         t = random.randint(start, end)
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:         <span class="hljs-keyword">if</span> select(t):
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:             return
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:         <span class="hljs-keyword">else</span>:
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:             yield t
+
+<span class="hljs-keyword">In</span> [82]: r = random_test(lambda x : x &lt; 100, 0, 1000)
+
+<span class="hljs-keyword">In</span> [83]: <span class="hljs-keyword">for</span> i, item <span class="hljs-keyword">in</span> enumerate(r):
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:     <span class="hljs-builtin-name">print</span>(i, item)
+</code></pre>
+<p>只要不满足 select 条件，这个测试也会一直进行下去，无论是进行多少次，不管是 100 次，还是 1000 次。</p>
+<h2 id="return-的在生成器中的含义"><a href="#return-的在生成器中的含义" class="headerlink" title="return 的在生成器中的含义"></a><code>return</code> 的在生成器中的含义</h2><p><code>return</code> 在生成器中表达的含义就是”一切已经结束了，没有更有趣的元素要返回了”</p>
+<p>基于这个含义，如果在 <code>return</code> 后跟上一个返回值的话，那么这个返回值是不会被返回的。</p>
+
+    <pre><code class="lang-python">In [<span class="hljs-number">84</span>]: <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">return_test</span><span class="hljs-params">()</span></span>:
+   ....:     <span class="hljs-keyword">return</span> <span class="hljs-string">"Will I be returned?"</span>
+   ....:     <span class="hljs-keyword">yield</span> <span class="hljs-string">"I know I will never be returned"</span>
+
+In [<span class="hljs-number">85</span>]: r = return_test()
+
+In [<span class="hljs-number">86</span>]: <span class="hljs-keyword">next</span>(r)
+---------------------------------------------------------------------------
+StopIteration                             Traceback (most recent call last)
+&lt;ipython-input-<span class="hljs-number">86</span>-0b5056469c9c&gt; <span class="hljs-keyword">in</span> &lt;<span class="hljs-class"><span class="hljs-keyword">module</span>&gt;()</span>
+----&gt; <span class="hljs-number">1</span> <span class="hljs-keyword">next</span>(r)
+
+<span class="hljs-symbol">StopIteration:</span> Will I be returned?
+</code></pre>
+<p>由此可见，执行 <code>return</code> 的时候，生成器就会停止，抛出 <code>StopIteration</code> 表示停止，不会再返回任何返回值。</p>
+<h2 id="return-等于-StopIteration"><a href="#return-等于-StopIteration" class="headerlink" title="return 等于 StopIteration ?"></a><code>return</code> 等于 <code>StopIteration</code> ?</h2><p>既然在上例中，执行 <code>return</code> 就会抛出 <code>StopIteration</code> 异常，那么在生成器函数中，是不是就意味着，<code>StopIteration</code> 是由 <code>return</code> 抛出的呢?</p>
+
+    <pre><code class="lang-python"><span class="hljs-keyword">In</span> [87]: def catch_stop():
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:     try:
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:         return
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:     except:
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>:         yield <span class="hljs-string">"I catch it"</span>
+
+<span class="hljs-keyword">In</span> [88]: c = catch_stop()
+
+<span class="hljs-keyword">In</span> [89]: next(c)
+---------------------------------------------------------------------------
+StopIteration                             Traceback (most recent call last)
+&lt;ipython-input-89-73b012f9653f&gt; <span class="hljs-keyword">in</span> &lt;module&gt;()
+----&gt; 1 next(c)
+
+StopIteration:
+</code></pre>
+<p>由代码可见，<code>StopIteration</code> 并没有被捕获，这说明 <code>StopIteration</code> 是在另一个地方抛出的。而至于是在哪里抛出的，目前据我了解，这可能涉及到 Python 底层解释器的实现，我尚不十分了解。</p>
+<h1 id="关于生成器函数的实现"><a href="#关于生成器函数的实现" class="headerlink" title="关于生成器函数的实现"></a>关于生成器函数的实现</h1><p>生成器函数的实现一个重要点就是它保存了每次运行时的环境信息以及下一次的起点。对于普通函数，每一次运行的起点无疑都是从函数的最开头。而对于生成器函数，除了第一次运行的起点是在函数最开头， 每一次运行的起点都是上一次运行结束的终点。</p>
+<p>另外虽然生成器函数保存了环境信息，但这并不说它保存了环境中每个变量的值。</p>
+
+    <pre><code class="lang-python">n [105]: N = 0
+
+<span class="hljs-keyword">In</span> [106]: def test_sum():
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>.:     i = 0
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>.:     <span class="hljs-keyword">while</span> <span class="hljs-literal">True</span>:
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>.:         yield N + i
+   <span class="hljs-built_in">..</span><span class="hljs-built_in">..</span>.:         i += 1
+
+<span class="hljs-keyword">In</span> [107]: t = test_sum()
+
+<span class="hljs-keyword">In</span> [108]: next(t)
+Out[108]: 0
+
+<span class="hljs-keyword">In</span> [109]: next(t)
+Out[109]: 1
+
+<span class="hljs-keyword">In</span> [110]: N = 100
+
+<span class="hljs-keyword">In</span> [111]: next(t)
+Out[111]: 102
+</code></pre>
+<p>由代码可见，生成器函数保存了环境变量中 <code>N</code> 的存在，但并没有在产生生成器时就将 <code>N</code> 的值定了下来，而仍是每次运行 <code>next</code> 时对其重新求值。</p>
+<h2 id="一些猜测"><a href="#一些猜测" class="headerlink" title="一些猜测"></a>一些猜测</h2><p>联想到 SICP 中对 stream 的实现，那么 Python 可能也有类似的做法，即将一个元素包装在函数里。<br>假如不做延时计算:</p>
+
+    <pre><code class="lang-python"><span class="hljs-keyword">In</span> [<span class="hljs-number">113</span>]: [<span class="hljs-string">"how long will it be?"</span>, time.<span class="hljs-built_in">sleep</span>(<span class="hljs-number">1</span>), time.<span class="hljs-built_in">sleep</span>(<span class="hljs-number">2</span>)]
+Out[<span class="hljs-number">113</span>]: [<span class="hljs-string">'how long will it be?'</span>, None, None] <span class="hljs-meta"># 3 seconds</span>
+</code></pre>
+<p>这个输出将在 3 秒后输出，但如果讲每个元素包装在函数里:</p>
+
+    <pre><code class="lang-python">In [<span class="hljs-number">114</span>]: lst = [lambd<span class="hljs-variable">a:</span> <span class="hljs-string">"how long will it be?"</span>,lambd<span class="hljs-variable">a:</span> time.<span class="hljs-keyword">sleep</span>(<span class="hljs-number">1</span>),lambd<span class="hljs-variable">a:</span> ti
+   .....: <span class="hljs-keyword">me</span>.<span class="hljs-keyword">sleep</span>(<span class="hljs-number">2</span>)]
+
+In [<span class="hljs-number">115</span>]: <span class="hljs-keyword">for</span> item in <span class="hljs-keyword">ls</span><span class="hljs-variable">t:</span>
+   .....:     <span class="hljs-keyword">print</span>(item())
+how long will it <span class="hljs-keyword">be</span>?
+None # <span class="hljs-number">1</span> second
+None # <span class="hljs-number">2</span> seconds
+</code></pre>
+<p>通过这个方法，每个元素也是在调用是才会被求值，因此我猜测 Python 在实现上可能有类似的做法。但具体是怎么做的，这是一个我接下来需要研究的话题。</p>
+<h1 id="后记"><a href="#后记" class="headerlink" title="后记"></a>后记</h1><p>如果对 <code>yield</code> 想要更多的了解，建议查看 <a href="https://www.python.org/dev/peps/pep-0255/" target="_blank" rel="external">PEP 255 – Simple Generators</a>, 其中更进一步的探讨了为什么要引入新的关键字 <code>yield</code>，而不是将其设置为一个内建函数，以及为什么不引入一个新的关键字代替 <code>def</code> 来更清楚地表示某个函数是生成器函数等等。</p>
+<h1 id="参考"><a href="#参考" class="headerlink" title="参考"></a>参考</h1><ol>
+<li><a href="https://www.python.org/dev/peps/pep-0255/" target="_blank" rel="external">PEP 255 – Simple Generators</a></li>
+<li><a href="https://swizec.com/blog/python-and-lazy-evaluation/swizec/5148" target="_blank" rel="external">Python and lazy evaluation</a></li>
+</ol>
+]]></content>
+    
+    <summary type="html">
+    
+      &lt;p&gt;在 SICP 第 3 章中，有一段部分内容是以 stream 为核心而展开的。而 stream 的特点就是 lazy evaluation / delayed evaluation （惰性求值 / 延迟计算）。在接触 stream 之时，我便立即联想到 Python 具有类
+    
+    </summary>
+    
+    
+      <category term="Python" scheme="https://lazzzis.github.io/hexo-theme-only/tags/Python/"/>
+    
+      <category term="SICP" scheme="https://lazzzis.github.io/hexo-theme-only/tags/SICP/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>对 SICP Chapter 2 的一些理解</title>
+    <link href="https://lazzzis.github.io/hexo-theme-only/2016/12/03/sicp-chapter-2-summary/"/>
+    <id>https://lazzzis.github.io/hexo-theme-only/2016/12/03/sicp-chapter-2-summary/</id>
+    <published>2016-12-03T15:01:22.000Z</published>
+    <updated>2017-07-30T05:48:51.000Z</updated>
+    
+    <content type="html"><![CDATA[<p>SICP 第二章的标题为 <em>“Building Abstractions with Data”</em>。与第一章标题<em>“Building Abstractions with Procedures”</em> 相比，这一章明显注重于在数据上的抽象。因此，在本章中所采用的例子中，会有多种数据类型被抽象出来，而每种数据类型又会对应着多种操作，那么随着代码量的增多，如何在不减少需求的情况下正确的对数据的抽象将直接影响开发者编码时的难度以及后期维护的成本。</p>
+<p>在阅读和练习完 Chapter 2 之后，我想谈一下对我思维冲击比较大的几个点。</p>
+<h1 id="Data-Directed-Programming"><a href="#Data-Directed-Programming" class="headerlink" title="Data-Directed Programming"></a>Data-Directed Programming</h1><p>在 SICP 中，DDP 出现的一个背景是：存在多种数据类型，它们需要实现相同功能的操作，但对于不同的类型，具体的实现方式有存在不同。</p>
+<p>拿书上的例子来说，对于有理数R1, R2, 它们的值分别为 3/4, 5/6。那么对于它们，可以构造一个方法叫做 add 用于计算 R1, R2 的值，比如 <code>(add R1 R2)</code>。</p>
+<p>同样的，如果是在同一个系统里，再增加一种类型 ———— 无理数。对于 I1，I2, 它们的值分别是 1 + 2i, 3 + 4i。同样，可以构造一个方法叫 add, 同于计算 I1，I2 的值，比如 <code>(add I1 I2)</code>。</p>
+<p><strong>问题来了</strong>：这是在同一个系统当中，add 被定义了两次，后一次会覆盖前一次，那么在运算过无理数后再调用 add 计算 R1, R2 时，系统必然会报错。</p>
+<p><strong>解法一</strong>: 对于支持面向对象和方法重载的语言，比如 Java, C++，这个问题根本就不是问题。写两个 add 方法，但是参数类型不同。当你调用 add 的时候，系统会根据参数的类型用于决定调用哪一个 add 方法。</p>
+<p><strong>解法二</strong>：对于像 C 语言这种语言，还可以重新命名函数的方法，比如对于计算有理数加法的函数，可以叫做 <code>add_rational</code>；对于计算无理数加法的函数，可以叫做 <code>add_irrational</code>。但问题也很明显，如果在这个系统增加更多种需要进行加法运算的数据类型，那么对于每一种数据类型定义一种函数，而且名字还需要确保不同。假如在系统设计初期，设计者能想好这么多名字，比如 100 种，那勉强还算解决了。然而对于用户来说，这就很头疼了。如果我面对一个支持 100 种数据类型的系统，每操作一种数据类型，我就需要查查手册。如果有一个 <code>add</code> 函数能支持任意一种数据类型加法的运算，那么用户必然对这个系统的好感度必然直线上升。</p>
+<p><strong>解法三</strong>：那就定义一个 <code>add</code> 函数，当传入两个数据时，判断一下类型，在进行相应的操作就好了。<br>伪代码如下:</p>
+
+    <pre><code class="lang-python">def add(x, y):
+    <span class="hljs-keyword">if</span> <span class="hljs-class"><span class="hljs-keyword">type</span></span>(x) == <span class="hljs-string">"rational"</span> <span class="hljs-keyword">and</span> <span class="hljs-class"><span class="hljs-keyword">type</span></span>(y) == <span class="hljs-string">"rational"</span>:
+        pass # 对应有理数加法的代码
+    <span class="hljs-keyword">elif</span> <span class="hljs-class"><span class="hljs-keyword">type</span></span>(x) == <span class="hljs-string">"irrational"</span> <span class="hljs-keyword">and</span> <span class="hljs-class"><span class="hljs-keyword">type</span></span>(y) == <span class="hljs-string">"irrational"</span>:
+        pass # 对应无理数加法的代码
+    <span class="hljs-keyword">elif</span> <span class="hljs-class"><span class="hljs-keyword">type</span></span>(x) == <span class="hljs-string">"type-a"</span> <span class="hljs-keyword">and</span> <span class="hljs-class"><span class="hljs-keyword">type</span></span>(y) == <span class="hljs-string">"type-a"</span>:
+        pass # 对应<span class="hljs-class"><span class="hljs-keyword">type</span>-<span class="hljs-title">a</span>加法的代码    </span>
+    <span class="hljs-keyword">elif</span> <span class="hljs-class"><span class="hljs-keyword">type</span></span>(x) == <span class="hljs-string">"type-b"</span> <span class="hljs-keyword">and</span> <span class="hljs-class"><span class="hljs-keyword">type</span></span>(y) == <span class="hljs-string">"type-b"</span>:
+        pass # 对应<span class="hljs-class"><span class="hljs-keyword">type</span>-<span class="hljs-title">b</span>加法的代码</span>
+    <span class="hljs-keyword">elif</span> ... # 以此类推，每个<span class="hljs-keyword">elif</span> 部分对应一种数据类型的加法运算
+</code></pre>
+<p>对于开发者实现来说，这个方法还算可以，虽然不算美观。<br>记得去年我在某公司实习的时候，我所在的那个项目中还真有这样的代码。一个文件中“挂”了至少上百个 <code>else if</code>。每个实习生一旦写好一个模块，就要在这个文件上加一个对应的 <code>else if</code>。然后因为多个实习生，每个实习生的工作台上都有整个项目的文件，最后提交的时候，负责管理实习生的员工还查看每个实习生增加了几个 <code>else if</code>，然后把它们一个一个汇总到一个文件上。<br>所以很明显，这个方法勉强可以，虽然对开发来说事实上会带来一点繁琐。</p>
+<p><strong>解法四</strong>: 在以上三种解法基础上，终于到了 DDP 登场。我认为 DDP 和解法三的一个重要区别就是，DDP 开发了一个表结构，帮助开发者分析类型并调用对应函数。同时在这时，系统还可以模块化，增加命名空间，避免设计者把过多时间花在起名字上。</p>
+<p>DDP 中有两个重要的函数 <code>put</code>, <code>get</code>。</p>
+
+    <pre><code class="lang-python"><span class="hljs-function"><span class="hljs-title">put</span><span class="hljs-params">(&lt;操作&gt;，&lt;方法所需参数的各个类型&gt;，方法名)</span></span>
+<span class="hljs-function"><span class="hljs-title">get</span><span class="hljs-params">(&lt;操作&gt;，&lt;方法所需参数的各个类型&gt;)</span></span>
+</code></pre>
+<p>先不管具体是怎么实现的，先明白功能。put 的功能是往系统的一个特殊数据结构中存储一种方法，而这个方法对应的操作是 &lt;操作&gt;，对应参数的各个类型为&lt;方法所需参数的各个类型&gt;。<br>比如:</p>
+
+    <pre><code class="lang-python">put(<span class="hljs-string">"add"</span>, [<span class="hljs-string">"rational"</span>, <span class="hljs-string">"rational"</span>], rational-<span class="hljs-keyword">add</span><span class="bash">)
+</span>put(<span class="hljs-string">"add"</span>, [<span class="hljs-string">"irrational"</span>, <span class="hljs-string">"irrational"</span>], irrational-<span class="hljs-keyword">add</span><span class="bash">)
+</span></code></pre>
+<p>而 put 的目的是为了 get，这个才是关键。通过 get 就可以实现取到对应数据类性的方法。</p>
+
+    <pre><code class="lang-python"><span class="hljs-builtin-name">get</span>(<span class="hljs-string">"add"</span>, [<span class="hljs-string">"rational"</span>, <span class="hljs-string">"rational"</span>]) # rational-<span class="hljs-builtin-name">add</span>
+<span class="hljs-builtin-name">get</span>(<span class="hljs-string">"add"</span>, [<span class="hljs-string">"irrational"</span>, <span class="hljs-string">"irrational"</span>]) # irrational-<span class="hljs-builtin-name">add</span>
+</code></pre>
+<p>这看上去似乎没什么用，但是如果在继续定义 add:</p>
+
+    <pre><code class="lang-python">def add(<span class="hljs-name">x</span>, y)
+    return get(<span class="hljs-string">"add"</span>, [type(<span class="hljs-name">x</span>), type(<span class="hljs-name">x</span>)])(<span class="hljs-name">x</span>, y)
+</code></pre>
+<p>那么这个 add 就可以处理各种系统支持的类型了。<br>比如如果我用 add 计算有理数 R1, R2的和，那么 <code>get</code> 会返回 <code>rational-add</code> 方法计算R1， R2；如果再用 add 计算无理数 I1, I2的和，那么 <code>get</code> 会返回 <code>irrational-add</code> 方法计算I1， I2。</p>
+<p>对于用户来说，每次计算调用的都是同一个方法 <code>add</code>，而对于系统，每次用于计算的则是不同的方法计算。那么如何解决命名空间呢？因为 put 方法已经在系统中实现，属于全局。那么put 也可以在任何地方使用，比如:</p>
+
+    <pre><code class="lang-python"><span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">install_rational</span><span class="hljs-params">()</span>:</span>
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">_add</span><span class="hljs-params">(x, y)</span>:</span>
+        <span class="hljs-keyword">pass</span> <span class="hljs-comment"># 处理有理数加法</span>
+    put(<span class="hljs-string">"add"</span>, [<span class="hljs-string">"rational"</span>, <span class="hljs-string">"rational"</span>], _add)
+
+<span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">install_irrational</span><span class="hljs-params">()</span>:</span>
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">_add</span><span class="hljs-params">(x, y)</span>:</span>
+        <span class="hljs-keyword">pass</span> <span class="hljs-comment"># 处理无理数加法</span>
+    put(<span class="hljs-string">"add"</span>, [<span class="hljs-string">"irrational"</span>, <span class="hljs-string">"irrational"</span>], _add)
+</code></pre>
+<p>这里事实上还涉及到了闭包。因为 <code>_add</code> 方法是在不同的函数中定义的，处于不同的命名空间。所以在这里，对于不同的数据类型的加法函数，可以采用同一个命名。另外，这种设计事实上也模块化了，因为当你需要用有理数时，只需执行 <code>install_rational()</code>。这样这个系统就支持有理数加法操作。</p>
+<p>对比解法三，四可以发现，解法四更简洁化了，它开发了一个程序用于自动添加对应的方法。</p>
+<p>因为 put 操作的作用是往表结构中存储数据，那么这个表结构可以采用类似 python 中的 dict 实现。</p>
+<h1 id="Message-Passing"><a href="#Message-Passing" class="headerlink" title="Message Passing"></a>Message Passing</h1><p>Message Passing 是本章另一个令我感觉十分新颖的点。在我看来，Message Passing 的特点在于它将一个数据，既可以看作函数操作，又可以看作对象操作。同时它又与 Object-oriented Programming (OOP) 又有些许相似之处。</p>
+<p>同样，以有理数的实现为例子:</p>
+
+    <pre><code class="lang-python"><span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">make_rational</span><span class="hljs-params">(numer, denom)</span>:</span>
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">add</span><span class="hljs-params">(y)</span>:</span>
+        <span class="hljs-keyword">pass</span>
+
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">sub</span><span class="hljs-params">(y)</span>:</span>
+        <span class="hljs-keyword">pass</span>
+
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">mul</span><span class="hljs-params">(y)</span>:</span>
+        <span class="hljs-keyword">return</span> make_rational(numer * y(<span class="hljs-string">"numer"</span>), denom * y(<span class="hljs-string">"denom"</span>))
+
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">dispatch</span><span class="hljs-params">(msg)</span>:</span>
+        <span class="hljs-keyword">if</span> msg == <span class="hljs-string">"add"</span>:
+            <span class="hljs-keyword">return</span> add
+        <span class="hljs-keyword">elif</span> msg == <span class="hljs-string">"sub"</span>:
+            <span class="hljs-keyword">return</span> sub
+        <span class="hljs-keyword">elif</span> msg == <span class="hljs-string">"mul"</span>:
+            <span class="hljs-keyword">return</span> mul
+        <span class="hljs-keyword">elif</span> msg == <span class="hljs-string">"numer"</span>:
+            <span class="hljs-keyword">return</span> numer
+        <span class="hljs-keyword">elif</span> msg == <span class="hljs-string">"denom"</span>:
+            <span class="hljs-keyword">return</span> denom
+        ...
+    <span class="hljs-keyword">return</span> dispatch
+</code></pre>
+<p>可以看出，如果构造一个有理数对象，那么这个方法实际上返回的是 dispatch 的方法。而如果用调用 add 方法，或 获得 numer 属性，那么就要把构建出来的对象当作函数使用:</p>
+
+    <pre><code class="lang-python">x, y = make_rational(<span class="hljs-number">2</span>, <span class="hljs-number">3</span>), make_rational(<span class="hljs-number">4</span>, <span class="hljs-number">5</span>)
+<span class="hljs-function"><span class="hljs-title">x</span><span class="hljs-params">(<span class="hljs-string">"add"</span>)</span><span class="hljs-params">(y)</span></span>
+<span class="hljs-function"><span class="hljs-title">x</span><span class="hljs-params">(<span class="hljs-string">"numer"</span>)</span></span>
+</code></pre>
+<p>这里是第一个有趣的地方，在第一行中，<code>x, y</code> 被看作是对象，而在第二、三行中，<code>x, y</code> 又被看作是方法 / 函数。这么一来 对象 和 函数 的界限似乎被打破了，或者说，对象 和 函数进行了自由的转换。</p>
+<p>第二个有趣的地方在于这与 OOP 的关系，如果在一个支持 OOP 语言编写的系统中存在 <code>Rational</code> 这个类，那么 <code>make_rational()</code> 就类似与构造函数 <code>Rational()</code>；<code>x(&quot;add&quot;)(y)</code> 就类似于 OOP 中的 <code>x.add(y)</code>；<code>x(&quot;numer&quot;)</code> 类似于 OOP 中的 <code>x.numer</code>。也就是说，在一个不支持面向对象，但支持将函数看作对象操作的语言中，Message Passing 实现了类似于 OOP 的功能。</p>
+<p>同样的，如果要定义一个通用的 add 操作，可以用以下方法实现:</p>
+
+    <pre><code class="lang-python">def <span class="hljs-keyword">add</span><span class="bash">(x, y):
+</span>    return x(<span class="hljs-string">"add"</span>)(y)
+x, y = make_rational(<span class="hljs-number">2</span>, <span class="hljs-number">3</span>), make_rational(<span class="hljs-number">4</span>, <span class="hljs-number">5</span>)
+<span class="hljs-keyword">add</span><span class="bash">(x, y)
+</span></code></pre>
+<p>那么用户就调用 <code>add(x, y)</code> 之时，又将 x，y 看作了对象而不是函数。倘若再增加一种无理数的数据类型，那也可以参照上文中有理数的实现方法实现，并且，如果无理数中的实现中，同样又对 “add” 的处理，那么无理数的相加也可以直接调用 <code>add(x, y)</code>。</p>
+<h1 id="Others"><a href="#Others" class="headerlink" title="Others"></a>Others</h1><p>除了以上两点，在书中还有更多的讨论：其中一个常见的问题就是如果如何将<code>add</code>用于其他类型的相加，比如无理数和有理数的相加，无理数和自然数的相加。书中采用的方法很巧妙，它定义了一个升级的规则，如果两个相加的数不在一个等级，那么将其中一个等级较低的进行升级。比如，<code>3 / 4</code> 与 <code>2</code> 相加，<code>2</code> 先升级，成为有理数<code>2 / 1</code>，这是可以处在同一层级（都是有理数），所以可以相加；<code>3 + 4i</code> 与 <code>2</code> 相加，<code>2</code> 先升级，成为了 <code>2 / 1</code>，但仍不在同一个层级，因此再升级，成为<code>2 / 1 + 0i</code>，这时可以相加了（注意，实数部分的 <code>3 + 2 / 1</code> 计算过程中事实上也运用了升级的规则）。</p>
+<p>总体来说，对于以上这几点，我只是做了比较基础的一些总结。如果对这方面感兴趣，建议阅读书籍，书中还有更多的内容值得阅读和思考。</p>
+<h1 id="References"><a href="#References" class="headerlink" title="References"></a>References</h1><ol>
+<li><a href="https://book.douban.com/subject/1148282/" target="_blank" rel="external">SICP</a></li>
+<li><a href="http://sicp.readthedocs.io/en/latest/index.html" target="_blank" rel="external">SICP 解题参考</a></li>
+<li><a href="http://inst.eecs.berkeley.edu/~cs61a/su10/resources/sp11-Jordy/ddp.html" target="_blank" rel="external">DDP and Message Passing @ inst.eecs.berkeley.edu</a></li>
+<li><a href="http://berkeley-cs61as.github.io/textbook/data-directed-programming.html" target="_blank" rel="external">Data-Directed Programming @ berkeley-cs61as</a></li>
+<li><a href="http://berkeley-cs61as.github.io/textbook/message-passing.html" target="_blank" rel="external">Message Passing @ berkeley-cs61as</a></li>
+</ol>
+]]></content>
+    
+    <summary type="html">
+    
+      &lt;p&gt;SICP 第二章的标题为 &lt;em&gt;“Building Abstractions with Data”&lt;/em&gt;。与第一章标题&lt;em&gt;“Building Abstractions with Procedures”&lt;/em&gt; 相比，这一章明显注重于在数据上的抽象。因此，在本章中
+    
+    </summary>
+    
+    
+      <category term="SICP" scheme="https://lazzzis.github.io/hexo-theme-only/tags/SICP/"/>
+    
+      <category term="Scheme" scheme="https://lazzzis.github.io/hexo-theme-only/tags/Scheme/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>创建了适用于 hexo 的一个主题 mls</title>
+    <link href="https://lazzzis.github.io/hexo-theme-only/2016/11/10/new-blog-theme-mls/"/>
+    <id>https://lazzzis.github.io/hexo-theme-only/2016/11/10/new-blog-theme-mls/</id>
+    <published>2016-11-10T11:46:55.000Z</published>
+    <updated>2017-07-30T05:48:51.000Z</updated>
+    
+    <content type="html"><![CDATA[<p>之前用的主题是基于 <a href="https://github.com/hexojs/hexo-theme-landscape" target="_blank" rel="external">landscape</a>, 虽然这确实是一个不错的主题，使用上也没什么不便，但毕竟这是一个他人贡献的主题。我一直想试着自己做一个主题。之前也尝试在 landscape 上改，修改了一些颜色，对 CSS 做了一些简单修改，但布局没变，整体一眼还是能看出这是 landscape，并且因为我当时不熟悉 EJS 模板，对 Sass 及 CSS3 不是特别熟悉，所以有些功能的实现也完全不知道怎么做，比如一些透明效果的动画。</p>
+<p>最近一段时间，相对以前来说稍微不忙了点，所以趁这个机会试着做一个主题了。</p>
+<h1 id="一些教程"><a href="#一些教程" class="headerlink" title="一些教程"></a>一些教程</h1><h2 id="MarketSheet"><a href="#MarketSheet" class="headerlink" title="MarketSheet"></a>MarketSheet</h2><p><a href="http://marksheet.io/" target="_blank" rel="external">MarketSheet</a> 这是一个 HTML/CSS/Sass 教程的网站。我主要用它学习 CSS。相比较于其它教程，我十分推荐这个教程。</p>
+<p>一是因为前期它不堆砌各种语法知识，所以前期比较简单，例子也比较多，比如最开始讲讲很基础简单的 color, size, 而不是上来就讲 margin, padding 等对新手来说不友好的点。如果前期语法太多，就比较容易在刚开始就犯糊涂，影响后面的学习。</p>
+<p>二是这个教程确实讲得清楚，比如对 <code>position</code> 属性的解释，比如以前我一直对 <code>relative</code>/<code>absolute</code>/ 不清楚，不知道<code>相对</code>是什么，<code>绝对</code> 是什么，但教程直接解释了 <code>relative</code> 是相对元素原先的位置，而 <code>absolute</code> 是相对已经对位的 parent 来说的。更多的内容可以参考网站。</p>
+<p>三是一些语法外的规则讲解，比如何时使用 class 和 id，如何在表示颜色的十六进制、rgba、hsl 的三者中抉择 等等。</p>
+<h2 id="Sass-amp-SCSS-Tutorial-for-Beginners"><a href="#Sass-amp-SCSS-Tutorial-for-Beginners" class="headerlink" title="Sass &amp; SCSS Tutorial for Beginners"></a>Sass &amp; SCSS Tutorial for Beginners</h2><p><a href="https://www.youtube.com/watch?v=sCbXTrsl7NU&amp;list=PL6gx4Cwl9DGBxQO2r_kmxn-0UqL_Rkj0t" target="_blank" rel="external">Sass &amp; SCSS Tutorial for Beginners</a><br>同样的理由，刚开始就不要太麻烦，把基础牢固最重要。这个教程每节课就讲一个知识点，比如 extend 或 mixin, 而且一节课的内容不长，10 分钟左右。<br>学完之后再去转转其他教程，这时学习一些稍微高级点的知识点就会相对轻松些。</p>
+<h2 id="CREATE-AN-HEXO-THEME"><a href="#CREATE-AN-HEXO-THEME" class="headerlink" title="CREATE AN HEXO THEME"></a>CREATE AN HEXO THEME</h2><p><a href="http://www.codeblocq.com/2016/03/Create-an-Hexo-Theme-Part-1-Index/" target="_blank" rel="external">CREATE AN HEXO THEME</a><br>这个就是从头到尾的一个 hexo theme 教程了，包括了从简单的首页开始，一直到最后的插入评论系统。应该说跟着这个教程做下来的话，搭建 hexo 博客的基本思路已经有了。自己主要做的就是稍微调整下布局，补充补充一些 CSS，这样一个基本功能的主题已经基本完成了。</p>
+<h1 id="一些开源框架-组件-插件"><a href="#一些开源框架-组件-插件" class="headerlink" title="一些开源框架 / 组件 / 插件"></a>一些开源框架 / 组件 / 插件</h1><h2 id="Materialize"><a href="#Materialize" class="headerlink" title="Materialize"></a>Materialize</h2><p><a href="https://github.com/Dogfalo/materialize" target="_blank" rel="external">Materialize</a><br>一个实现了 Material design 的前端框架。之所以使用框架，一方面是想稍微偷个懒，因为目前我对如何实现响应式布局不是很了解，用现成的框架能降低难度，其次是我对 Material design 还是有点喜欢的，所以选择了这个框架。</p>
+<p>不过，并没有使用框架中太多部分，主要是导航栏，icons，以及内置的 grid 布局。</p>
+<h2 id="jquery-backstretch"><a href="#jquery-backstretch" class="headerlink" title="jquery-backstretch"></a>jquery-backstretch</h2><p><a href="https://github.com/srobbin/jquery-backstretch" target="_blank" rel="external">jquery-backstretch</a><br>使用这个插件主要是两个理由，一是可以延迟加载背景图片，也就是说避免图片加载太慢而导致其它内容加载延迟太多。通过延迟加载，可以在其它加载了差不多了后再加载图片。二是在写主题时发现 chrome 的一个 bug，在我写了 <code>body {background-attachment: fixed}</code> 后，chrome 并没有照做，通过审查元素可以发现，chrome 自动在 body 上加了一个 <code>style=&quot;background-attachment: scroll&quot;</code>。虽然 google 了很多方法，但效果都不大理想。后来放弃了刚开始在 body 元素上设置背景的想法，而通过在其它元素上设置以间接达到目的。</p>
+<h2 id="highlight-js"><a href="#highlight-js" class="headerlink" title="highlight.js"></a>highlight.js</h2><p><a href="https://github.com/isagalaev/highlight.js" target="_blank" rel="external">highlight.js</a><br>这个用于对代码的高亮。原先 hexo 的代码渲染很奇怪，它把代码部分渲染成了表格，而且用于代码高亮部分的主题的样式表我也看不懂。所以我这一次又偷懒了，关闭了默认的代码高亮（关闭方法不难，可参考 <a href="https://liuzhichao.com/2016/hexo-use-prettify-to-highlight-code.html" target="_blank" rel="external">link</a>），使用了 highlight.js，而且这个组件提供了很多主题。我现在用的主题是 “Atom One Light”。这是一个我同样在 atom 上设置的亮色主题。</p>
+<h2 id="highlightjs-line-numbers-js"><a href="#highlightjs-line-numbers-js" class="headerlink" title="highlightjs-line-numbers.js"></a>highlightjs-line-numbers.js</h2><p><a href="https://github.com/wcoder/highlightjs-line-numbers.js" target="_blank" rel="external">highlightjs-line-numbers.js</a><br>因为希望给代码显示行数，所以找到了这个插件，使用也很方便。</p>
+<h2 id="hexo-image-caption"><a href="#hexo-image-caption" class="headerlink" title="hexo-image-caption"></a>hexo-image-caption</h2><p><a href="https://github.com/wayou/hexo-image-caption" target="_blank" rel="external">hexo-image-caption</a><br>在原先的 landscape 里，图片下方可以显示一段文字，这段文字就是在写 markdown 时插入图片时的说明文字。为了实现这个功能，我再次偷懒，搜到了这个插件。使用后的效果就是这样: <img src="http://placehold.it/350x150" alt="这是一张 350 * 150 的图片？"></p>
+<h2 id="fontawesome"><a href="#fontawesome" class="headerlink" title="fontawesome"></a>fontawesome</h2><p>一开始不知道一些图标是如何显示在 blog 上的，后来我知道了 <a href="http://fontawesome.io/" target="_blank" rel="external">fontawesome</a>。使用没什么难度，效果可以参考现在页面 footer 上的那几个图标的样子，唯一我个人不满意的地方就在于没有网易云音乐的图标，所以用了一个其它图标代替。</p>
+<h2 id="share-js"><a href="#share-js" class="headerlink" title="share.js"></a>share.js</h2><p><a href="https://github.com/overtrue/share.js" target="_blank" rel="external">share.js</a> 用于分享功能。这个功能原本不在计划之内，但在逛 GitHub 时偶然看到了，而且确实简单好用，于是加上了。目前我选择了四个社交应用的分享，显示在文章之后。</p>
+<h1 id="Thanks"><a href="#Thanks" class="headerlink" title="Thanks"></a>Thanks</h1><p>这次主题的创建比我想象的简单了很多，一个很重要的原因就在于 GitHub 上丰富的资源，包括各种教程，为我节省了很多精力和时间，<del>允许我偷懒</del>。我必须要向这些资源们的作者表示感谢。</p>
+<p>同时我不得不说，有些 blog 也带给了我一些灵感。jquery-backstretch 是我在看了<a href="xcoder.in">艾克斯の編碼者</a>的 blog 才知道的，另外也从这个 blog 的主题上也知道了如何单独建立 Categories 和 Tags 的页面。同时， 网页下滑后导航栏透明的设计是在看了 <a href="http://wattlebird.github.io/" target="_blank" rel="external">Dedication</a> 之后才想到要做。而在 footer 上加图标的方法则是参考了 <a href="http://morris821028.github.io/" target="_blank" rel="external">Morris’ Blog</a> 的设计。</p>
+<h1 id="关于-mls"><a href="#关于-mls" class="headerlink" title="关于 mls"></a>关于 mls</h1><p>主题的代码这几天我会在 GitHub 上开源。</p>
+<p>至于为什么叫 mls，其实很简单，m 代表了 materialize 框架；ls 代表 landscape，代表了上一个主题，因为最初的想法不是从头写，而是想在 landscape 上修改。</p>
+]]></content>
+    
+    <summary type="html">
+    
+      &lt;p&gt;之前用的主题是基于 &lt;a href=&quot;https://github.com/hexojs/hexo-theme-landscape&quot; target=&quot;_blank&quot; rel=&quot;external&quot;&gt;landscape&lt;/a&gt;, 虽然这确实是一个不错的主题，使用上也没什么不便，
+    
+    </summary>
+    
+      <category term="Front-end" scheme="https://lazzzis.github.io/hexo-theme-only/categories/Front-end/"/>
+    
+    
+      <category term="JavaScript" scheme="https://lazzzis.github.io/hexo-theme-only/tags/JavaScript/"/>
+    
+      <category term="CSS" scheme="https://lazzzis.github.io/hexo-theme-only/tags/CSS/"/>
+    
+      <category term="Sass" scheme="https://lazzzis.github.io/hexo-theme-only/tags/Sass/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>晴天 — TOEFL @ ZJU</title>
+    <link href="https://lazzzis.github.io/hexo-theme-only/2016/10/29/toefl-10-29-zju/"/>
+    <id>https://lazzzis.github.io/hexo-theme-only/2016/10/29/toefl-10-29-zju/</id>
+    <published>2016-10-29T15:37:57.000Z</published>
+    <updated>2017-07-30T05:48:51.000Z</updated>
+    
+    <content type="html"><![CDATA[<h1 id="考前"><a href="#考前" class="headerlink" title="考前"></a>考前</h1><p>上一次考托福，考了 93。 这分数明显不够，上次出分立即报了一次。故意选择了跟上次一样的考场 — 浙大 E 考场，原因是不想去熟悉新考场了，找个已经去过的考场吧。</p>
+<p>在酒店里发生了一件小插曲，隔壁间的客户发现他们的卡不能打开房门，于是用我房间里的电话向前台求助。关键是这两位，同时也是一对情侣，也是到浙大考托福的，而且是从上海交大来的。女生表现比较开朗，在过程中了解到女生已经考出来了，而男生的成绩不理想，所以她只是陪男生来考试的。短暂的聊天中，并没提到女生的具体分数，但我猜她的分数应该还是比较不错的，因为她说了一句：“TOEFL 分数不需要很高，105 就已经足够了”。</p>
+<h1 id="考试进行"><a href="#考试进行" class="headerlink" title="考试进行"></a>考试进行</h1><p><strong>你信不信我是10点才开考的？</strong></p>
+<p>按照常理，一般到了休息室后，会填保证书，然后检录入场。一般9点左右就已经在位置上了。</p>
+<p>但这次考试，ABCD考场都正常，唯独 <strong>E</strong> 考场网络不对 —— 然后一直等到 9 点半，工作人员才来到休息室，讲解考场纪律，发放保证书。</p>
+<p>从 8 点半进入休息室算起，至少等了一小时。不过休息室里的同学们并没有表现出明显的不满和慌张 —— 相反有些人直接趴在桌子上补睡眠，而有几个人则聊起了 —  “我上次去了台湾的考场”，“你去了台湾，我刚刚去了一次美国的考场” ……</p>
+<p>工作人员进入休息时，用略带诙谐的语气说了句：“大家放心，托福没有统一的开考时间 ———— 别自己把自己心情给搞砸了”。</p>
+<p>相对来说，这里的检录较慢，一个人一个人排队，工作人员也检查比较仔细。9点40左右开始的检录，轮到我入场已经 10 点了。</p>
+<p>顺序自然是 Reading, Listening, Speaking, Writing.</p>
+<p>加试是听力经典加试 ID 卡那一套。不过我是第一次听这套，刚听到时以为是非经典加试，认真听完了 Conversation.</p>
+<p>Speaking 那个 Section 略紧张 —— 说好要表现得自信一点呢！？</p>
+<p>略吐槽一下：CS 真是热门，Listening 中一个 Conversation 出现一个 CS 专业的学生因为实习而去找教授请求写推荐信；而在 Speaking 中的 Task3，女主角说: 我一个同学主修 CS，他（她？）可以到电脑维修部门做兼职，这可以为他（她？）增加工作经验（working experience） —— 连美帝的学生也认为 CS 的学生是修电脑的么？🙄</p>
+<h1 id="考后"><a href="#考后" class="headerlink" title="考后"></a>考后</h1><p>走出考场已经 14 点了。打开微信，各种相关群对今天的考试已经讨论了也差不多有一小时了，感觉我已经插不上嘴了。</p>
+<p>心情一般，就这样走向了公交站，准备回校。</p>
+<h1 id="后记-—-晴天"><a href="#后记-—-晴天" class="headerlink" title="后记 — 晴天"></a>后记 — 晴天</h1><p>整个 10 月都是阴天或下雨，几乎没有晴天，包括今天也不例外。</p>
+<p>之所以想说晴天，其实是想说周杰伦的歌曲《晴天》。最近一直在听这首歌，不禁心里有种共鸣 ———— 每个人都着这自己追求的事物，一直都有，但每个人用了多少的勇气去追呢？至少我觉得我没有用尽所有的勇气 ———— 大概是我的意志还是不够坚定。</p>
+<p>至少这是一首让人安静的曲子 ———— 当这几天心慌的时候，听听这曲子也着实能让我安静不少。</p>
+<p>最后补充两张图:</p>
+<p><img src="https://s21.postimg.org/l7cs5476f/IMG_1541.jpg" alt="考点指示牌"></p>
+<p><img src="https://s15.postimg.org/agxm0dfvf/IMG_1542.jpg" alt="储物柜"></p>
+]]></content>
+    
+    <summary type="html">
+    
+      &lt;h1 id=&quot;考前&quot;&gt;&lt;a href=&quot;#考前&quot; class=&quot;headerlink&quot; title=&quot;考前&quot;&gt;&lt;/a&gt;考前&lt;/h1&gt;&lt;p&gt;上一次考托福，考了 93。 这分数明显不够，上次出分立即报了一次。故意选择了跟上次一样的考场 — 浙大 E 考场，原因是不想去熟悉新考场了，
+    
+    </summary>
+    
+      <category term="TOEFL" scheme="https://lazzzis.github.io/hexo-theme-only/categories/TOEFL/"/>
+    
+    
+      <category term="TOEFL" scheme="https://lazzzis.github.io/hexo-theme-only/tags/TOEFL/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>考 GRE @ Ningbo University</title>
+    <link href="https://lazzzis.github.io/hexo-theme-only/2016/08/26/gre-at-ningbo-university/"/>
+    <id>https://lazzzis.github.io/hexo-theme-only/2016/08/26/gre-at-ningbo-university/</id>
+    <published>2016-08-26T13:24:52.000Z</published>
+    <updated>2017-07-30T05:48:51.000Z</updated>
+    
+    <content type="html"><![CDATA[<p>大约两个月前报名了在宁波大学的这场 GRE 考试。之所以选择宁波的这场考试，一是因为 8 月份杭州没有考位，只能另寻它处，二是相比与周围的考点（如苏州，南京等），宁波更近，方便我的来回。</p>
+<h1 id="出发"><a href="#出发" class="headerlink" title="出发"></a>出发</h1><p>大约 8 月初的时候，我就把宾馆和车票订好了。值得一提的是，我选择坐动车前往宁波，而我已经近六七年左右没坐过除地铁以外的铁路了。因为以前我并没有跑太远，而且自己家不远处就有个汽车站，而离火车站很远。所以平时大多选择了汽车坐为交通工具。这次坐动车出行，反到给了我一点新鲜感。</p>
+<p><img src="http://i.imgur.com/aLTMi7w.jpg" alt="杭州火车东站"></p>
+<p>从杭州火车东站到宁波站大约一小时，路途正常。我旁边坐了一个小萝莉。因为当时是午饭时间，一路上大部分时间她都在吃刚泡开的泡面。</p>
+<p>到站后，乘坐地铁即可到宁波大学，大约半小时时间。在地铁上，刚好坐在对面的一个妹子也是考 GRE 的，因为我瞄到了她手中的确认信。不过我并没有选择上去勾搭。</p>
+<h1 id="确认考场"><a href="#确认考场" class="headerlink" title="确认考场"></a>确认考场</h1><p>这时的宁波大学正在修建大门，如果不是开车的话，其实没什么影响。刚开始没有找到地点，绕了包玉刚教学楼一圈，才发现自己刚进校门看到的其实就是考点😅。不过那栋楼的门卫并不让我上楼，所以我也没上楼继续确认。</p>
+<p><img src="http://i.imgur.com/DehNyE2.jpg" alt="进大门就可以看到的包玉刚教学楼"></p>
+<p><img src="http://i.imgur.com/R6Cbhbt.jpg" alt="一开始走到了教学楼之后，来到了图书馆"></p>
+<p>之后我并没有马上走，而是到了边上的大踏步校园超市 （这名字让我感觉很有趣）。买了瓶饮料，发现有一个妹子坐在超市前休息，而且也与我一样考 GRE。所以我们聊了起来。她是来自上海交大的研究生，想考 GRE 去美国读博士。— 交大的研究生，瞬间有点觉得我这种来自不知名学校的本科生有点尴尬。</p>
+<p>聊到一半时，又来了一个妹子，是宁波诺丁汉大学的学生。她现在在杭州实习，而且已经去英国读了两年了，而且也与我一样是读 CS 的。 —— 有出国的经验，TOEFL 基本没什么问题，基本只有把 GRE 搞定了，我瞬间又有点羡慕她了。</p>
+<p>交流一会了之后就散了，毕竟她们还要找今晚的住所。</p>
+<h1 id="考前"><a href="#考前" class="headerlink" title="考前"></a>考前</h1><p>今早大概 7 点半醒的，醒来后继续看了看 issue 和 argument。然后就退房去考场了。</p>
+<p>到场后，大约 8 点 10 分，我没有选择立即上楼进考场，因为我知道进了考场之后就只能发呆了 —— 你的物品已经锁在柜子里了，你没法看资料，只能思考。</p>
+<p>我依旧选择坐在大踏步超市前，拿出 Mac 继续看点资料。随着时间流动，人也聚集了起来。也看到一些家长带着孩子来的。说实话，其实我觉得大家都是本科生及以上的学历了，自己来考试是完全可以的，用不着牵涉家长。当然，他们或许有其他原因，我也不想过多评价。</p>
+<p>大概 9 点，人陆续开始上楼。需要注意的是，如果你要到这考试，你最好准备好 10 块钱，因为这里的储物柜是需要先付 10 元押金的。休息室不算大，可能还有点挤。和浙江省教育考试院（学院路考点，我第一次考 GRE 的地方）的休息室 —— 一个足有两个考场那么大的休息室 —— 比起来，这个真心小了点，不过无伤大雅。</p>
+<p>一个考点两个教室，每个教室约可容纳 40 名考生。配备空调。</p>
+<p>使用的是宽屏的 lenovo 屏幕，这比正方形的屏幕看起来要舒服点。</p>
+<p>我使用的键盘那块键盘比较干净，摸上去还啥不好的，各个键敲上去也比较均衡。</p>
+<p>椅子是可旋转的办公椅子，坐垫和靠背都是软的，而不是那种硬邦邦的椅子。</p>
+<p>桌子是典型的语言教室用桌。两张靠在一起。挡板不算高，刚好遮住屏幕。人与人之间没有挡板，这可能是一个比较注意的问题。因为没有这个延长的挡板，其实我稍微往边上靠靠，还是可以考到旁边的一点屏幕的。不过我能看到的那点部分很少。就算我旁边的想看我的也不会有所得。但如果考托福就不一样了，与同桌没有挡板，考口语的时候，双方之间可能听到对方的回答。另外我坐在第一排，我不敢确定后面的人是不是能看到我的屏幕。不过我想应该不会吧，如果能看到的话，那就是一个很严重的问题了。</p>
+<p>比较有意思的一点是，我当时对屏幕上的照片吃惊了一下。因为我今天穿的是一件深绿色的衣服，外加头发没有仔细梳理，几根呆毛翘了起来。另外我拍照时摘下了眼镜，有可能是光线的缘故，再配上我当时严肃的表情，照片中的我就好似一个喝醉了酒的被抓进了警局的流浪汉。</p>
+<h1 id="考时"><a href="#考时" class="headerlink" title="考时"></a>考时</h1><p>首先是 AW:</p>
+<ul>
+<li>issue: The main benefit of the study of history is to dispel the illusion that people living now are significantly different from people who lived in earlier times.</li>
+<li>argument: Mozart School</li>
+</ul>
+<p>接下来是 VQVQV</p>
+<p>第一个 V 有几道题做到过。特别需要说明的是一篇中文章：这篇文章做到过，当题目明显改了。所以考试时看到旧题不要太激动。日常练习的时候还是要以 <strong>“弄懂”</strong> 作为首要原则！</p>
+<p>听说最近的 Q 难度有点加大，确实在时间上比以前多花了点。但总的来说，看懂题干，注意单位等一些小细节就基本没问题，因为在知识点上，考得仍然是中国学生能在初中就可以学到的知识点。</p>
+<p>做完后显示的成绩 V 155; Q 170</p>
+<h1 id="考后"><a href="#考后" class="headerlink" title="考后"></a>考后</h1><p>先通过微信向微臣客服报分了，毕竟我考 GRE 的路上 微臣的课程和资料 确实给了我很大的帮助。因为考了 155，所以还可以得到一份形近词卡片。而且我的报分在今晚的 “琦叔GRE” 公众号推送文章中 “8月26日 考情汇报”中 上榜了。</p>
+<hr>
+<p><strong>既然来了宁波大学，怎么能不绕宁波大学看看呢</strong></p>
+<p>大踏步超市，店阿姨挺友好的，无论是今天和昨天都会热心地给来考试学生提供帮助和回答一些问题。我猜她估计在这工作了很久，所以也帮了很多考生了吧。</p>
+<p><img src="http://i.imgur.com/whYzmox.jpg" alt="不知道是流浪狗还是店阿姨养的狗。只是拍到了一只，其实还有另外几只"></p>
+<p>走过教学楼，看到了一个金字塔，不知这个塔是不是有什么含义</p>
+<p><img src="http://i.imgur.com/oIXBBsX.jpg" alt="这个金字塔指向什么呢"></p>
+<p>每个学校都会有那么几个环形建筑</p>
+<p><img src="http://i.imgur.com/PZDUnPd.jpg" alt="每次看到环型建筑就会让我想到信号塔"></p>
+<p>星桥，从碑子和扶栏的状态来看，可能有段长时间了</p>
+<p><img src="http://i.imgur.com/lRYdW8j.jpg" alt="这座桥是不是学生们的必经之路呢？"></p>
+<p>一所学校不能没有湖 / 池塘啊</p>
+<p><img src="http://i.imgur.com/ZUgr6Wo.jpg" alt="绿绿的"></p>
+<p>一颗赛艇！</p>
+<p><img src="http://i.imgur.com/8ir13Ln.jpg" alt="亦可赛艇"></p>
+<p>转了一圈后来到了，感觉时间不晚，于是来到了自习室休息</p>
+<p><img src="http://ww3.sinaimg.cn/large/006fVPCvjw1f77js6oaj0j31kw23u7vy.jpg" alt="右边的女生把书堆的好高啊，估计最近一直在这位置学习吧"></p>
+<p>这个阶梯有点“复古”</p>
+<p><img src="http://i.imgur.com/BRJWk2V.jpg" alt="这种样式很久没看到了"></p>
+<hr>
+<p>从外观上看，有些地方可能有点旧了，但总的来说，其实外观上还说不上差。而且现在宁大还在进行一部分的修建和装修。所以外观上一定会变得很好看的。</p>
+<p>但可惜的是，我对宁大的实力不是很了解。可能是因为平时跟宁大学生交流比较少。</p>
+<h1 id="后记"><a href="#后记" class="headerlink" title="后记"></a>后记</h1><p>这算是一次因为考试需要而展开的简单旅途。对我来说，这种单独出行的机会并不多，我想从此开始，单独出行对我来说也不会陌生了。</p>
+<p>至于成绩，我觉得已经满足我的要求。虽然没有冲上 330，但 325 的成绩算是满足了基本要求。另外不知道我的作文有没有提升。虽然没有预测到作文题目（因为我考试前写的作文都是所谓的“高频”作文），但实际考场上敲得还蛮顺手的。</p>
+<p>以上。</p>
+<hr>
+<p><img src="http://i.imgur.com/m8jEq3m.jpg" alt="*电波女与青春男* 第 12 集"></p>
+]]></content>
+    
+    <summary type="html">
+    
+      &lt;p&gt;大约两个月前报名了在宁波大学的这场 GRE 考试。之所以选择宁波的这场考试，一是因为 8 月份杭州没有考位，只能另寻它处，二是相比与周围的考点（如苏州，南京等），宁波更近，方便我的来回。&lt;/p&gt;
+&lt;h1 id=&quot;出发&quot;&gt;&lt;a href=&quot;#出发&quot; class=&quot;header
+    
+    </summary>
+    
+      <category term="GRE" scheme="https://lazzzis.github.io/hexo-theme-only/categories/GRE/"/>
+    
+    
+      <category term="GRE" scheme="https://lazzzis.github.io/hexo-theme-only/tags/GRE/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>写在 TFT 小组 第 35 期 之后</title>
+    <link href="https://lazzzis.github.io/hexo-theme-only/2016/06/28/after-tft-25/"/>
+    <id>https://lazzzis.github.io/hexo-theme-only/2016/06/28/after-tft-25/</id>
+    <published>2016-06-28T12:51:02.000Z</published>
+    <updated>2017-07-30T05:48:51.000Z</updated>
+    
+    <content type="html"><![CDATA[<p>在同学的介绍下，我报名了 <em>刘功勋</em> 老师的 TFT 35 期口语小组。之所以报名这个小组，理由也很简单 —— 就是为了学习口语，为 TOEFL 做准备。在昨天，小组正式结束，感觉收获颇多。同时，这几天又有一些其它想法涌上心头。</p>
+<h1 id="这十天做了什么"><a href="#这十天做了什么" class="headerlink" title="这十天做了什么"></a>这十天做了什么</h1><h2 id="背段子"><a href="#背段子" class="headerlink" title="背段子"></a>背段子</h2><p>TA(助教)每天都会布置一篇新段子，一般是一篇一分钟内可以背完的段子。这些段子大多是老师基于某一个话题，然后从晚上摘抄整合下来的，感觉质量还挺高的。举个例子：<a href="http://mp.weixin.qq.com/s?__biz=MzA4NjI5MzUwOQ==&amp;mid=200509253&amp;idx=1&amp;sn=a994a45c0f085635c8623dfef029d8b4&amp;scene=1&amp;srcid=0628nF1OTxzKc4JtlUFD5FEa#rd" target="_blank" rel="external">口语段子</a></p>
+<p>说实话，我算是小组里每天完成被段子任务最早的同学了：一是因为我现在几乎全职学英语，二是我的口语不是很好导致有些词没都对就搜的一些过去了，但好在 coach 会对学生的发音进行一对一的简单评价</p>
+<h2 id="做TPO"><a href="#做TPO" class="headerlink" title="做TPO"></a>做TPO</h2><p>每天都会做一套左右的 TPO 要求将做题时的语音(即模拟考试状态下的语音)和多刺研读材料后修改的录音，以微信语音的方式发在小组群里。</p>
+<p>不得不提一句，因为大家都发在群里，所以我也听了其他人的语言 。又一次感觉我的口语发音和别人差距怎么就这么大呢？</p>
+<p><img src="http://r6.loli.io/IVZN3y.png" alt=""></p>
+<h2 id="Coach-反馈"><a href="#Coach-反馈" class="headerlink" title="Coach 反馈"></a>Coach 反馈</h2><p>“没有反馈的训练是一场灾难”。我现在十分认同这句话。</p>
+<p>其实上面两项”背段子” 或是 “作TPO” 都是可以自己独立完成的，用不着报什么小坐。但”反馈”在口语中却是很依赖他人的。因为在得到coach 的反馈之前，我对某些错误是一无所知，甚至认为自己是正确的。举个例子，<code>have to do</code> 就这个短语而言，我刚开始说得时候，总把重音放在了 to 和 do 上，也就是说 have 这个词轻声掠过了。但实际上，coach 告诉我敲敲相反了，尤其是向 to 这种词往往用不着咬那么重，把 have 要的轻， to do 咬的重，一股 chinglish 的味道。说完， coach 便示范了一遍，比较著我自己的读音，确实我有一股 chinglish 的味道。每天coach 都会单独点评每个人的一条语音，指出不当之处。</p>
+<p>但可惜这些 coach 也是兼职，不是全职，coach 们大多在中午休息时间或下班时间点评。不过话又说回来，如果是全职的话，价格就应该会贵了许多吧。</p>
+<h2 id="上课"><a href="#上课" class="headerlink" title="上课"></a>上课</h2><p>十天内，<em>刘功勋</em> 老师讲了 7 次课。讲了一些做题和语言现象。每个老师都有那么一些理解。我觉得关于上课这点，没什么好说的。</p>
+<p>不过令我比较羡慕的是，老师作为一名从 CMU 毕业的学生，不仅会 能在硅谷code, 还会 guitar!。这对没有受过艺术教育的我来说，真的好羡慕这种才能。</p>
+<h2 id="总的来说"><a href="#总的来说" class="headerlink" title="总的来说"></a>总的来说</h2><p>至少有所收获，值不值是一个很难说的话题。毕竟每个人看法不同。而且我也不想说太多这方面的问题，毕竟我不想让著文章变成一篇打广告的文章。</p>
+<p>但是这个新的形式很吸引我，每天背段子，完成作业，接受反馈，老师讲课，至少比单独一人瞎蒙的要强。</p>
+<h1 id="十天后"><a href="#十天后" class="headerlink" title="十天后"></a>十天后</h1><h2 id="即将来临的TOEFL考试"><a href="#即将来临的TOEFL考试" class="headerlink" title="即将来临的TOEFL考试"></a>即将来临的TOEFL考试</h2><p>没几天了，也不想说是哪一天了。感觉已经是交学费了。上个月考完 G,用一个月准备 T 确实慌了点。但也无奈，暑假的位置已经背抢光了，没有太多选择了。</p>
+<h2 id="离校的暑假"><a href="#离校的暑假" class="headerlink" title="离校的暑假"></a>离校的暑假</h2><p>我现在的座标在杭州，也就是两个月后要举办某重大国际会议的地方。</p>
+<p>ZF 不允许学生暑假留校，想把我们都赶走，以免后患。对于我来说，我当然不愿意这个决策，毕竟学校好歹学习氛围比其他地方要好点。但要对于我们学生来说，没有选择，毕竟我们不能与 ZF 对抗。因此我身边的人都很快选择了接受。我尽管也选择了接受，但是一想到 ZF 是处于什么目的而出台了这个决策，我的心里依旧充满了不满。</p>
+<p>毕竟没想到一场看上去一场与我无关的回忆竟然打破我两个月的计划。</p>
+<h2 id="关于代码"><a href="#关于代码" class="headerlink" title="关于代码"></a>关于代码</h2><p>说实话现在很少敲了，虽说有时会忙中偷闲敲上几行，但明显没有以前多了。未来几个月也应该会是这样把…</p>
+<p><br></p>
+<p><strong>P.S.</strong> <strong>某天晚上突然有感写下一篇blog，可能某些地方思绪略微杂乱了一点。我自己也不知道什么时候会突然想写新的一篇。</strong></p>
+]]></content>
+    
+    <summary type="html">
+    
+      &lt;p&gt;在同学的介绍下，我报名了 &lt;em&gt;刘功勋&lt;/em&gt; 老师的 TFT 35 期口语小组。之所以报名这个小组，理由也很简单 —— 就是为了学习口语，为 TOEFL 做准备。在昨天，小组正式结束，感觉收获颇多。同时，这几天又有一些其它想法涌上心头。&lt;/p&gt;
+&lt;h1 id=&quot;这十天
+    
+    </summary>
+    
+      <category term="TOEFL" scheme="https://lazzzis.github.io/hexo-theme-only/categories/TOEFL/"/>
+    
+    
+      <category term="TOEFL" scheme="https://lazzzis.github.io/hexo-theme-only/tags/TOEFL/"/>
+    
+      <category term="TFT" scheme="https://lazzzis.github.io/hexo-theme-only/tags/TFT/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>Java 中 wait 与 notify 的简单操作</title>
+    <link href="https://lazzzis.github.io/hexo-theme-only/2016/02/15/java-wait-notify-usage/"/>
+    <id>https://lazzzis.github.io/hexo-theme-only/2016/02/15/java-wait-notify-usage/</id>
+    <published>2016-02-15T14:05:51.000Z</published>
+    <updated>2017-07-30T05:48:51.000Z</updated>
+    
+    <content type="html"><![CDATA[<p>在我知道wait() 与 notify() 以前，我常常用一种看似很 low 的方式控制线程同步</p>
+
+    <pre><code class="lang-java"><span class="hljs-keyword">while</span>(condition) {
+  <span class="hljs-keyword">return</span> ;
+}
+</code></pre>
+<p>实际上这个线程是一直在运行的，并没有操作系统概念中的阻塞（Block）。而要实现阻塞（Block）则要借助 Java 线程中的 wait() 操作 与 notify() 操作。</p>
+<h1 id="相对简单的例子"><a href="#相对简单的例子" class="headerlink" title="相对简单的例子"></a>相对简单的例子</h1><p>wait() 操作与 notify() 操作必须在临界区内进行。而 synchronized 需要一个对象用作锁，以区分各个不同的临界区。比如临界区 A 中进行了 wait() 操作，在也必须在临界区A 中进行 notify() 操作。</p>
+<p>现看一个例子：</p>
+
+    <pre><code class="lang-java"><span class="hljs-keyword">public</span> <span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">Test</span> </span>{
+    <span class="hljs-function"><span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">void</span> <span class="hljs-title">main</span><span class="hljs-params">(String[] args)</span> </span>{
+        TestThread testThread = <span class="hljs-keyword">new</span> TestThread();
+        testThread.start();
+        <span class="hljs-keyword">synchronized</span> (testThread) {
+            System.out.println(<span class="hljs-string">"Before wait"</span>);
+            <span class="hljs-keyword">try</span> {
+                testThread.wait();
+            } <span class="hljs-keyword">catch</span> (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+        System.out.println(<span class="hljs-string">"All completed!"</span>);
+    }
+}
+
+<span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">TestThread</span> <span class="hljs-keyword">extends</span> <span class="hljs-title">Thread</span> </span>{
+    <span class="hljs-meta">@Override</span>
+    <span class="hljs-function"><span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">run</span><span class="hljs-params">()</span> </span>{
+        <span class="hljs-keyword">synchronized</span> (<span class="hljs-keyword">this</span>) {
+            <span class="hljs-keyword">try</span> {
+                Thread.sleep(<span class="hljs-number">5000</span>);
+            } <span class="hljs-keyword">catch</span> (InterruptedException e) {
+                e.printStackTrace();
+            }
+            System.out.println(<span class="hljs-string">"notify() Completed"</span>);
+            notify();
+        }
+    }
+}
+</code></pre>
+<p>例子中用了两次 <code>synchronized</code> ，但两次对应的参数是相同的，所以这两块代码都属于同一个临界区。当执行 wait 操作时，程序进入阻塞状态，在进行 notify 操作前，不会进行下一步，即不会输出<code>All completed!</code>。当 sleep 完成，即过了 5 秒钟后，触发 notify() 操作，打印<code>notify() Completed</code>。此时程序从阻塞状态进入就绪状态，然后进入运行状态，输出<code>All completed!</code>。</p>
+<p><em>注意点</em>:</p>
+<ol>
+<li>切记 wait 操作和 notify 操作要在同一个临界区中进行。</li>
+<li>在执行 wait 操作时会抛出一个 InterruptedException 的异常，记得捕获。</li>
+</ol>
+<p>输出结果参考：</p>
+
+    <pre><code class="lang-java">Before wait
+<span class="hljs-function"><span class="hljs-title">notify</span><span class="hljs-params">()</span></span> Completed
+All completed!
+</code></pre>
+<h1 id="相对复杂的例子"><a href="#相对复杂的例子" class="headerlink" title="相对复杂的例子"></a>相对复杂的例子</h1><p>从上面一个例子看出，wait 和 notify 操作实现了进程同步，类似于播放器的暂停(wait)与继续(notify)。只有在 notify 的情况下才能继续 wait 之后的内容，可以保证一些临界值的准确性。</p>
+<p>在操作系统概念中，有一个典型的 <em>消费者与生产者</em> 的模型。在一块区域中，最多存放 5 个 unit 的物品，当区域中的物品少于 5 个时，生产者就会生产 1 个 unit 的物品放在区域内；当区域中的物品大于 0 个时，消费者就会从区域中取走 1 个 unit 的物品。</p>
+<p>如果用 wait 与 notify 模拟的话，那就是要控制好两者的出现时机。</p>
+<p>先看代码：</p>
+
+    <pre><code class="lang-java"><span class="hljs-keyword">import</span> java.util.Date;
+<span class="hljs-keyword">import</span> java.util.Vector;
+<span class="hljs-comment">/**
+* Created by lazzzis on 2/9/16.
+*/</span>
+<span class="hljs-keyword">public</span> <span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">Test</span></span>{
+    <span class="hljs-function"><span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">void</span> <span class="hljs-title">main</span><span class="hljs-params">(String[] args)</span> </span>{
+        Producer producer = <span class="hljs-keyword">new</span> Producer();
+        producer.start();
+        <span class="hljs-keyword">new</span> Consumer(producer).start();
+        <span class="hljs-keyword">try</span> {
+            Thread.sleep(<span class="hljs-number">80</span>);
+        } <span class="hljs-keyword">catch</span> (InterruptedException e) {
+            e.printStackTrace();
+        }
+        System.exit(<span class="hljs-number">0</span>);
+    }
+}
+<span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">Producer</span> <span class="hljs-keyword">extends</span> <span class="hljs-title">Thread</span> </span>{
+    <span class="hljs-keyword">static</span> <span class="hljs-keyword">final</span> <span class="hljs-keyword">int</span> MAXQUEUE = <span class="hljs-number">5</span>;
+    <span class="hljs-keyword">private</span> Vector messages = <span class="hljs-keyword">new</span> Vector();
+    <span class="hljs-meta">@Override</span>
+    <span class="hljs-function"><span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">run</span><span class="hljs-params">()</span> </span>{
+        <span class="hljs-keyword">try</span> {
+            <span class="hljs-keyword">while</span> (<span class="hljs-keyword">true</span>) {
+                <span class="hljs-keyword">this</span>.putMessage();
+            }
+        } <span class="hljs-keyword">catch</span> (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+    <span class="hljs-function"><span class="hljs-keyword">private</span> <span class="hljs-keyword">synchronized</span> <span class="hljs-keyword">void</span> <span class="hljs-title">putMessage</span><span class="hljs-params">()</span> <span class="hljs-keyword">throws</span> InterruptedException </span>{
+        <span class="hljs-keyword">while</span> (messages.size() == MAXQUEUE) {
+            System.out.println(<span class="hljs-string">"I\'m waiting!"</span>);
+            wait();
+        }
+        messages.addElement(<span class="hljs-keyword">new</span> Date().toString());
+        System.out.println(<span class="hljs-string">"put message"</span>);
+        notify();
+    }
+    <span class="hljs-function"><span class="hljs-keyword">public</span> <span class="hljs-keyword">synchronized</span> String <span class="hljs-title">getMessage</span><span class="hljs-params">()</span> <span class="hljs-keyword">throws</span> InterruptedException </span>{
+        notify();
+        <span class="hljs-keyword">while</span> (messages.size() == <span class="hljs-number">0</span>) {
+            wait();
+        }
+        String message = (String) messages.firstElement();
+        messages.removeElement(message);
+        <span class="hljs-keyword">return</span> message;
+    }
+}
+<span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">Consumer</span> <span class="hljs-keyword">extends</span> <span class="hljs-title">Thread</span> </span>{
+    Producer producer;
+    <span class="hljs-function"><span class="hljs-keyword">public</span> <span class="hljs-title">Consumer</span><span class="hljs-params">(Producer p)</span> </span>{
+        producer = p;
+    }
+    <span class="hljs-meta">@Override</span>
+    <span class="hljs-function"><span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">run</span><span class="hljs-params">()</span> </span>{
+        <span class="hljs-keyword">try</span> {
+            <span class="hljs-keyword">while</span> (<span class="hljs-keyword">true</span>) {
+                String message = producer.getMessage();
+                System.out.println(<span class="hljs-string">"Got message: "</span> + message);
+            }
+        } <span class="hljs-keyword">catch</span> (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+}
+</code></pre>
+<p><em>注意点:</em></p>
+<ol>
+<li><code>synchronized</code>对于同一对象的不同方法，算作同样的临界区</li>
+<li>两个方法中 notify 和 wait 的顺序相反，如果相同，极有可能发生两者同时处于wait状态，而导致无法触发 notify 的情况。</li>
+<li>在 getMessage 中触发 notify 会使触发 wait 的 putMessage 继续运行，相当于一旦有物品被取走，就会通知生产者马上生产一个</li>
+<li>在 putMessage 中触发 notify 会使触发 wait 的 getMessage 继续运行，相当于一旦有物品被生产，就会通知消费者马上取走一个。</li>
+</ol>
+<h1 id="参考"><a href="#参考" class="headerlink" title="参考"></a>参考</h1><ol>
+<li><a href="http://www.programcreek.com/2009/02/notify-and-wait-example/" target="_blank" rel="external">Java Thread: notify() and wait() examples</a></li>
+<li><a href="http://stackoverflow.com/questions/886722/how-to-use-wait-and-notify-in-java" target="_blank" rel="external">How to use wait and notify in Java?</a></li>
+</ol>
+]]></content>
+    
+    <summary type="html">
+    
+      &lt;p&gt;在我知道wait() 与 notify() 以前，我常常用一种看似很 low 的方式控制线程同步&lt;/p&gt;
+
+    &lt;pre&gt;&lt;code class=&quot;lang-java&quot;&gt;&lt;span class=&quot;hljs-keyword&quot;&gt;while&lt;/span&gt;(condition)
+    
+    </summary>
+    
+    
+      <category term="Java" scheme="https://lazzzis.github.io/hexo-theme-only/tags/Java/"/>
+    
+      <category term="Thread" scheme="https://lazzzis.github.io/hexo-theme-only/tags/Thread/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>Java Arrays.asList 转化 int 数组为 List</title>
+    <link href="https://lazzzis.github.io/hexo-theme-only/2016/02/09/java-arrays-aslist-int-array/"/>
+    <id>https://lazzzis.github.io/hexo-theme-only/2016/02/09/java-arrays-aslist-int-array/</id>
+    <published>2016-02-09T14:40:01.000Z</published>
+    <updated>2017-07-30T05:48:51.000Z</updated>
+    
+    <content type="html"><![CDATA[<h1 id="问题的发现"><a href="#问题的发现" class="headerlink" title="问题的发现"></a>问题的发现</h1><p>用 Arrays.asList 方法转化一 int 型数组为 List 类型</p>
+
+    <pre><code class="lang-java"><span class="hljs-keyword">import</span> java.util.Arrays;
+<span class="hljs-keyword">import</span> java.util.List;
+
+<span class="hljs-keyword">public</span> <span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">Test</span> {</span>
+    <span class="hljs-function"><span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">void</span> <span class="hljs-title">main</span><span class="hljs-params">(String[] args)</span> </span>{
+        <span class="hljs-keyword">int</span> arr[] = <span class="hljs-keyword">new</span> <span class="hljs-keyword">int</span>[]{<span class="hljs-number">1</span>, <span class="hljs-number">2</span>, <span class="hljs-number">3</span>};
+        List <span class="hljs-built_in">list</span> = Arrays.asList(arr);
+
+        System.out.println(<span class="hljs-string">"int array"</span>);
+        System.out.println(<span class="hljs-built_in">list</span>.size());
+        <span class="hljs-built_in">list</span>.forEach(x -&gt; System.out.println(x));
+        <span class="hljs-comment">/*  output:
+            int array
+            1
+            [I@16b98e56
+         */</span>
+    }
+}
+</code></pre>
+<p>如果按照一般的思维，转化后的 list 应该含有三个元素{1, 2, 3}，所以 size 自然也应该是3。但从实践来看，并不是如此。</p>
+<h1 id="原因解释"><a href="#原因解释" class="headerlink" title="原因解释"></a>原因解释</h1><p>首先查看 Arrays.asList 的源码</p>
+
+    <pre><code class="lang-java"><span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> &lt;T&gt; <span class="hljs-function">List&lt;T&gt; <span class="hljs-title">asList</span>(<span class="hljs-params">T... a</span>) </span>{
+    <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> ArrayList&lt;&gt;(a);
+}
+</code></pre>
+<p>可以发现该方法传入的参数是一个可变长的参数。而问题的关键在于泛型。在 JAVA 中，基本数据类型是不能被泛型的。基本数据类型，即 primitive type，包含 8 种，具体可查看 <a href="https://docs.oracle.com/javase/tutorial/java/nutsandbolts/datatypes.html" target="_blank" rel="external">Link</a> 。</p>
+<p>支持泛型的只能是对象。int 是基本数据类型，不能被泛型。而 int[] 是数组，数组在 JAVA 中属于对象，因此能被泛型。所以在最开始的代码中，list 仅包含一个元素，而这个元素即为 包含了 {1, 2, 3} 的数组。</p>
+<h1 id="解决方法"><a href="#解决方法" class="headerlink" title="解决方法"></a>解决方法</h1><h2 id="声明-List-类型为-List-lt-lt-int-gt-gt"><a href="#声明-List-类型为-List-lt-lt-int-gt-gt" class="headerlink" title="声明 List 类型为 List&lt;&lt; int[] &gt;&gt;"></a>声明 List 类型为 List&lt;&lt; int[] &gt;&gt;</h2>
+    <pre><code class="lang-java"><span class="hljs-keyword">import</span> java.util.Arrays;
+<span class="hljs-keyword">import</span> java.util.List;
+
+<span class="hljs-keyword">public</span> class Test {
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">void</span> main(<span class="hljs-keyword">String</span>[] args) {
+        <span class="hljs-keyword">int</span> arr[] = <span class="hljs-keyword">new</span> <span class="hljs-keyword">int</span>[]{<span class="hljs-number">1</span>, <span class="hljs-number">2</span>, <span class="hljs-number">3</span>};
+        List&lt;<span class="hljs-keyword">int</span>[]&gt; list1 = Arrays.asList(arr);
+        System.out.<span class="hljs-built_in">println</span>(list1.<span class="hljs-built_in">get</span>(<span class="hljs-number">0</span>).length);
+        Arrays.stream(list1.<span class="hljs-built_in">get</span>(<span class="hljs-number">0</span>)).forEach(x -&gt; System.out.<span class="hljs-built_in">println</span>(x));
+        <span class="hljs-comment">/*  output:
+            3
+            1
+            2
+            3
+         */</span>
+    }
+}
+</code></pre>
+<p>既然知道了list中仅有的元素是一个数组，那么只能将计就计，从列表取出是要多一个心眼，知道拿出的是数组。</p>
+<h2 id="将数组声明为-Integer-对象数组"><a href="#将数组声明为-Integer-对象数组" class="headerlink" title="将数组声明为 Integer 对象数组"></a>将数组声明为 Integer 对象数组</h2><p>Integer 属于对象，因此能被泛型，可以达到预期的效果。</p>
+
+    <pre><code class="lang-java"><span class="hljs-keyword">import</span> java.util.Arrays;
+<span class="hljs-keyword">import</span> java.util.List;
+
+<span class="hljs-keyword">public</span> <span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">Test</span> {</span>
+    <span class="hljs-function"><span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">void</span> <span class="hljs-title">main</span><span class="hljs-params">(String[] args)</span> </span>{
+        Integer arrIN[] = <span class="hljs-keyword">new</span> Integer[]{<span class="hljs-number">1</span>, <span class="hljs-number">2</span>, <span class="hljs-number">3</span>};
+        <span class="hljs-built_in">list</span> = Arrays.asList(arrIN);
+        System.out.println(<span class="hljs-string">"Integer array"</span>);
+        System.out.println(<span class="hljs-built_in">list</span>.size());
+        <span class="hljs-built_in">list</span>.forEach(x -&gt; System.out.println(x));
+        <span class="hljs-comment">/*  output:
+            3
+            1
+            2
+            3
+         */</span>
+    }
+}
+</code></pre>
+<p>相对来讲这种方法跟满足预期要求。</p>
+<h1 id="参考"><a href="#参考" class="headerlink" title="参考"></a>参考</h1><ol>
+<li>Stack Overflow <a href="http://stackoverflow.com/questions/1467913/arrays-aslist-not-working-as-it-should" target="_blank" rel="external">Arrays.asList() not working as it should?</a></li>
+<li><a href="http://www.cnblogs.com/chenssy/p/3890842.html" target="_blank" rel="external">Java提高篇（三六）—–Java集合细节（二）：asList的缺陷</a></li>
+</ol>
+]]></content>
+    
+    <summary type="html">
+    
+      &lt;h1 id=&quot;问题的发现&quot;&gt;&lt;a href=&quot;#问题的发现&quot; class=&quot;headerlink&quot; title=&quot;问题的发现&quot;&gt;&lt;/a&gt;问题的发现&lt;/h1&gt;&lt;p&gt;用 Arrays.asList 方法转化一 int 型数组为 List 类型&lt;/p&gt;
+
+    &lt;pre&gt;&lt;code
+    
+    </summary>
+    
+    
+      <category term="Java" scheme="https://lazzzis.github.io/hexo-theme-only/tags/Java/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>Python @staticmethod 与 @classmethod 的区别分析</title>
+    <link href="https://lazzzis.github.io/hexo-theme-only/2016/02/03/staticmethod-and-classmethod-in-Python/"/>
+    <id>https://lazzzis.github.io/hexo-theme-only/2016/02/03/staticmethod-and-classmethod-in-Python/</id>
+    <published>2016-02-03T13:33:09.000Z</published>
+    <updated>2017-07-30T05:48:51.000Z</updated>
+    
+    <content type="html"><![CDATA[<p>乍一看之下，@staticmethod 与 @classmethod 真的很相似，貌似都可以看作是静态函数，除了后者必须有一个传入参数外就貌似没区别了。但既然加入了，那也一定有开发者的考虑了。</p>
+<h1 id="相同点：调用者"><a href="#相同点：调用者" class="headerlink" title="相同点：调用者"></a>相同点：调用者</h1>
+    <pre><code class="lang-python"><span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">TestClass</span><span class="hljs-params">()</span>:</span>
+
+<span class="hljs-meta">    @classmethod</span>
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">class_foo</span><span class="hljs-params">(cls)</span>:</span>
+        print(cls)
+        print(<span class="hljs-string">'test in class_foo'</span>)
+
+<span class="hljs-meta">    @staticmethod</span>
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">static_foo</span><span class="hljs-params">()</span>:</span>
+        print(<span class="hljs-string">'test in static_foo'</span>)
+
+
+<span class="hljs-keyword">if</span> __name__ == <span class="hljs-string">'__main__'</span>:
+    test = TestClass()
+    test.class_foo()
+    test.static_foo()
+    TestClass.class_foo()
+    TestClass.static_foo()
+</code></pre>
+<p>输出：</p>
+<pre><code>&lt;class &#39;__main__.TestClass&#39;&gt;
+test in class_foo
+test in static_foo
+&lt;class &#39;__main__.TestClass&#39;&gt;
+test in class_foo
+test in static_foo
+</code></pre><p>无论是<code>@classmethod</code>还是<code>@staticmethod</code>  的调用者，即可以为一个已经是实例化的对象，也可以的是为一个类名，这一点上与 JAVA 或 C++ 的静态函数有点相似</p>
+<h1 id="主要区别：参数要求"><a href="#主要区别：参数要求" class="headerlink" title="主要区别：参数要求"></a>主要区别：参数要求</h1><p><code>@classmethod</code> 比 <code>@staicmethod</code> 多要求一个参数，而多处的这个参数 <code>cls</code> 指代的就是调用者的类。从上一个例子可以看出，<code>cls</code>实际上指代的就是调用者的类型，即<code>test</code>的类型为<code>TestClass</code>。</p>
+<h1 id="应用举例"><a href="#应用举例" class="headerlink" title="应用举例"></a>应用举例</h1><h2 id="构造多个-constructor（构造函数）"><a href="#构造多个-constructor（构造函数）" class="headerlink" title="构造多个 constructor（构造函数）"></a>构造多个 constructor（构造函数）</h2><p>对于 C++ 以及 JAVA 函数来说，由于存在重载机制，因此可以多个构造函数。比如在 JAVA 的 Test 类中，我可以声明一个用数组初始化的构造函数，也可以声明一个由字符串初始化的构造函数。但由于 Python 没有这种机制，貌似有点棘手。但可以用 @classmethod 弥补。</p>
+
+    <pre><code class="lang-python"><span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">TestClass</span><span class="hljs-params">()</span>:</span>
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">__init__</span><span class="hljs-params">(self, lst)</span>:</span>
+        self.lst = lst
+
+<span class="hljs-meta">    @classmethod</span>
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">from_str</span><span class="hljs-params">(cls, s)</span>:</span>
+        lst = s.split()
+        <span class="hljs-keyword">return</span> cls(lst)
+
+<span class="hljs-keyword">if</span> __name__ == <span class="hljs-string">'__main__'</span>:
+    t = TestClass([<span class="hljs-number">1</span>, <span class="hljs-number">2</span>, <span class="hljs-number">3</span>])
+    print(t.lst)
+    t = TestClass.from_str(<span class="hljs-string">"1 2 3"</span>)
+    print(t.lst)
+</code></pre>
+<p>输出：</p>
+<pre><code>[1, 2, 3]
+[&#39;1&#39;, &#39;2&#39;, &#39;3&#39;]
+</code></pre><p>而如果用 @staticmethod 则显得无力了</p>
+<h2 id="构造工厂类"><a href="#构造工厂类" class="headerlink" title="构造工厂类"></a>构造工厂类</h2><p>借助上面的特性，可以把在实际编写中写出一些简单的工厂类</p>
+<pre><code>class Diagram():
+    @classmethod
+    def make_circle(Class, color):
+        return Class.Circle(color)
+
+    @classmethod
+    def make_square(Class, color):
+        return Class.Circle(color)
+
+    class Circle():
+        def __init__(self, color):
+            self.color = color
+
+    class Square():
+        def __init__(self, color):
+            self.color = color
+
+class AnotherDiagram():
+    @classmethod
+    def make_circle(Class, color):
+        return Class.Circle(color)
+
+    @classmethod
+    def make_square(Class, color):
+        return Class.Circle(color)
+
+    class Circle():
+        def __init__(self, color):
+            self.color = color
+
+    class Square():
+        def __init__(self, color):
+            self.color = color
+
+if __name__ == &quot;__main__&quot;:
+    factory = Diagram
+    d_circle = factory.make_circle(&quot;red&quot;)
+    d_square = factory.make_square(&quot;green&quot;)
+
+    factory = AnotherDiagram
+    ad_circle = factory.make_circle(&quot;violet&quot;)
+    ad_square = factory.make_square(&quot;pink&quot;)
+    print(d_circle.color, d_square.color, ad_circle.color, ad_square.color)
+</code></pre><p>例子中有两个工厂类：Diagram 和 AnotherDiagram 代表两种图表，两种图表都有 Circle 和Square 。另外值得注意的是，因为命名空间的原因，可以分别在两个工厂内声明 Circle 类和 Square 类。而不用大费力气的声明成这样：</p>
+
+    <pre><code class="lang-python"><span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">DiagramCirle</span><span class="hljs-params">()</span>:</span>
+    <span class="hljs-keyword">pass</span>
+
+<span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">DiagramSquare</span><span class="hljs-params">()</span>:</span>
+    <span class="hljs-keyword">pass</span>
+
+<span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">AnotherDiagramCircle</span><span class="hljs-params">()</span>:</span>
+    <span class="hljs-keyword">pass</span>
+
+<span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">AnotherDiagramSquare</span><span class="hljs-params">()</span>:</span>
+    <span class="hljs-keyword">pass</span>
+</code></pre>
+<p>运用 @classmethod 的工厂方式可读性显得更佳。而且在 factory 调用函数，不需要知道自己是 Diagram 或 AnotherDiagram，直接调用需要的绘图方法即可。</p>
+<h1 id="参考"><a href="#参考" class="headerlink" title="参考"></a>参考</h1><ol>
+<li><a href="https://book.douban.com/subject/25955274/" target="_blank" rel="external">Python编程实战 运用设计模式、并发和程序库创建高质量程序</a> / Python in Practice: Create Better Programs Using Concurrency, Libraries, and Patterns</li>
+<li><a href="http://stackoverflow.com/questions/12179271/python-classmethod-and-staticmethod-for-beginner/14605349" target="_blank" rel="external">Stack Overflow - Python @classmethod and @staticmethod for beginner?</a></li>
+<li><a href="https://www.zhihu.com/question/20021164" target="_blank" rel="external">知乎 - Python 中的 classmethod 和 staticmethod 有什么具体用途？</a></li>
+</ol>
+]]></content>
+    
+    <summary type="html">
+    
+      &lt;p&gt;乍一看之下，@staticmethod 与 @classmethod 真的很相似，貌似都可以看作是静态函数，除了后者必须有一个传入参数外就貌似没区别了。但既然加入了，那也一定有开发者的考虑了。&lt;/p&gt;
+&lt;h1 id=&quot;相同点：调用者&quot;&gt;&lt;a href=&quot;#相同点：调用者&quot; 
+    
+    </summary>
+    
+    
+      <category term="Python" scheme="https://lazzzis.github.io/hexo-theme-only/tags/Python/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>UVa1395 - Slim Span</title>
+    <link href="https://lazzzis.github.io/hexo-theme-only/2016/01/25/uva1395/"/>
+    <id>https://lazzzis.github.io/hexo-theme-only/2016/01/25/uva1395/</id>
+    <published>2016-01-25T06:05:41.000Z</published>
+    <updated>2017-07-30T05:48:51.000Z</updated>
+    
+    <content type="html"><![CDATA[<h1 id="思路"><a href="#思路" class="headerlink" title="思路"></a>思路</h1><p>首先有一点是可以确定的：对于任何一连通图，必有一生成树（简直废话）。<br>对于这一题，关键的问题是确定最大与最小。对于这种寻找两个相关变量的题，其实一般可以先试着确定一个，然后再去寻找另一个。<br>比如在这题中，可以迭代每一个边 L，同时把这条边 L 当做最小的边，用比它大的边去试着连同一幅图，知道找到边 R， 使得加上这条边 R 后刚好可以凑成一幅联通图。<br>因此，从上述思路可以看出，排序是必不可少了。所有排序是第一步。<br>排序好后进行遍历 L，建立 N （顶点数） 个并查集 S，每加入一条边就将该边的端点对应的并查集合并（前提是两个端点对应不同的并查集）。<br>直到刚好加入边 R 后，并查集只剩一个，且大小刚好与顶点数相等。此时对于 L 来说，R － L 极为其 “苗条度”。<br>因此对所有求得的“苗条度”求一个最小值即可。如果连一个“苗条度”都没有，那结果自然就是找不到合适的答案了。</p>
+<h1 id="代码"><a href="#代码" class="headerlink" title="代码"></a>代码</h1>
+    <pre><code class="lang-cpp"><span class="hljs-comment">/*
+ * Run Time : 0.033s
+ */</span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;iostream&gt;</span></span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;cstring&gt;</span></span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;vector&gt;</span></span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;algorithm&gt;</span></span>
+
+<span class="hljs-keyword">using</span> <span class="hljs-keyword">namespace</span> <span class="hljs-built_in">std</span>;
+
+<span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">Node</span>{</span>
+    <span class="hljs-keyword">int</span> first, second;
+    <span class="hljs-keyword">int</span> len;
+};
+
+<span class="hljs-function"><span class="hljs-keyword">bool</span> <span class="hljs-title">cmp</span><span class="hljs-params">(Node a, Node b)</span> </span>{
+    <span class="hljs-keyword">return</span> a.len &lt; b.len;
+}
+
+<span class="hljs-keyword">const</span> <span class="hljs-keyword">int</span> INF = <span class="hljs-number">1000000</span>;
+<span class="hljs-keyword">const</span> <span class="hljs-keyword">int</span> MAXN = <span class="hljs-number">100</span> + <span class="hljs-number">50</span>;
+<span class="hljs-keyword">int</span> N, M;
+<span class="hljs-built_in">vector</span>&lt;Node&gt; nodes;
+<span class="hljs-keyword">int</span> size[MAXN], root[MAXN];
+
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">read</span><span class="hljs-params">()</span> </span>{
+    <span class="hljs-keyword">int</span> a, b, k;
+    nodes.clear();
+    <span class="hljs-keyword">for</span> (<span class="hljs-keyword">int</span> i = <span class="hljs-number">0</span>; i &lt; M; ++ i) {
+        <span class="hljs-built_in">cin</span> &gt;&gt; a &gt;&gt; b &gt;&gt; k;
+        Node n;
+        n.first = a; n.second = b; n.len = k;
+        nodes.push_back(n);
+    }
+}
+
+<span class="hljs-keyword">int</span> ans;
+
+<span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">Find</span><span class="hljs-params">(<span class="hljs-keyword">int</span> n)</span> </span>{
+    <span class="hljs-keyword">if</span> (root[n] == n) {
+        <span class="hljs-keyword">return</span> n;
+    }
+    <span class="hljs-keyword">return</span> root[n] = Find(root[n]);
+}
+
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">work</span><span class="hljs-params">()</span> </span>{
+    sort(nodes.begin(), nodes.end(), cmp);
+    ans = INF;
+    <span class="hljs-keyword">for</span> (<span class="hljs-keyword">int</span> i = <span class="hljs-number">0</span>, j; i &lt; M; ++ i) {
+        <span class="hljs-keyword">for</span> (j = <span class="hljs-number">1</span>; j &lt;= N; ++ j) {
+            size[j] = <span class="hljs-number">1</span>;
+            root[j] = j;
+        }
+        <span class="hljs-keyword">for</span> (j = i; j &lt; M; ++ j) {
+            <span class="hljs-keyword">int</span> ra = Find(nodes[j].first);
+            <span class="hljs-keyword">int</span> rb = Find(nodes[j].second);
+            <span class="hljs-keyword">if</span> (ra != rb) {
+                root[rb] = ra;
+                size[ra] += size[rb];
+            }
+            <span class="hljs-keyword">if</span> (size[Find(<span class="hljs-number">1</span>)] == N) {
+                <span class="hljs-keyword">break</span>;
+            }
+        }
+        <span class="hljs-keyword">if</span> (size[Find(<span class="hljs-number">1</span>)] == N) {
+            ans = min(nodes[j].len - nodes[i].len, ans);
+        } <span class="hljs-keyword">else</span> <span class="hljs-keyword">if</span> (size[Find(<span class="hljs-number">1</span>)] &lt; N) {
+            <span class="hljs-keyword">break</span>;
+        }
+    }
+}
+
+<span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">main</span><span class="hljs-params">()</span> </span>{
+    ios::sync_with_stdio(<span class="hljs-literal">false</span>);
+    <span class="hljs-built_in">cin</span>.tie(<span class="hljs-number">0</span>);
+    <span class="hljs-keyword">while</span>(<span class="hljs-built_in">cin</span> &gt;&gt; N &gt;&gt; M &amp;&amp; (N + M)) {
+        read();
+        work();
+        <span class="hljs-built_in">cout</span> &lt;&lt; (ans == INF ? <span class="hljs-number">-1</span> : ans) &lt;&lt; <span class="hljs-built_in">endl</span>;
+    }
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}
+</code></pre>
+<h1 id="后记"><a href="#后记" class="headerlink" title="后记"></a>后记</h1><p>最近没怎么练习，在做这题时犯了一个低级错误。刚开始使用了一个 set （集合）代替并查集。当 set 大小为 N 时，即可计算“苗条度”<br>这种想法当然是<strong>错误</strong>的！！！很明贤，顶点数达到要求了，但并不一定代表图已经连通！</p>
+]]></content>
+    
+    <summary type="html">
+    
+      &lt;h1 id=&quot;思路&quot;&gt;&lt;a href=&quot;#思路&quot; class=&quot;headerlink&quot; title=&quot;思路&quot;&gt;&lt;/a&gt;思路&lt;/h1&gt;&lt;p&gt;首先有一点是可以确定的：对于任何一连通图，必有一生成树（简直废话）。&lt;br&gt;对于这一题，关键的问题是确定最大与最小。对于这种寻找两个相关变量
+    
+    </summary>
+    
+      <category term="ACM" scheme="https://lazzzis.github.io/hexo-theme-only/categories/ACM/"/>
+    
+    
+      <category term="ACM" scheme="https://lazzzis.github.io/hexo-theme-only/tags/ACM/"/>
+    
+      <category term="UVaOJ" scheme="https://lazzzis.github.io/hexo-theme-only/tags/UVaOJ/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>修改 grub2 的启动主题以及等待时间</title>
+    <link href="https://lazzzis.github.io/hexo-theme-only/2015/12/28/grub-theme/"/>
+    <id>https://lazzzis.github.io/hexo-theme-only/2015/12/28/grub-theme/</id>
+    <published>2015-12-28T13:15:43.000Z</published>
+    <updated>2017-07-30T05:48:51.000Z</updated>
+    
+    <content type="html"><![CDATA[<h1 id="备份"><a href="#备份" class="headerlink" title="备份"></a>备份</h1><p>已防万一，最好还是先做好备份:</p>
+
+    <pre><code class="lang-bash"><span class="hljs-symbol">sudo</span> <span class="hljs-meta">cp</span> -R /<span class="hljs-keyword">boot </span>~/
+</code></pre>
+<p>这里将 /boot 备份在了自己的 home 目录下， 需要的话，保存在其它地方也是一样的</p>
+<h1 id="下载主题"><a href="#下载主题" class="headerlink" title="下载主题"></a>下载主题</h1><p>这里以 Breeze GRUB2 theme 为例，<a href="http://kde-look.org/content/show.php/Breeze+GRUB2+theme?content=171217" target="_blank" rel="external">地址</a>。下载后，将压缩包解压。在解压后的文件夹中可以看到 <code>install.sh</code> 文件，然后已 root 权限安装:</p>
+
+    <pre><code class="lang-bash">sudo ./install<span class="hljs-selector-class">.sh</span>
+</code></pre>
+<p>安装好后，可以看到在 <code> /boot/grub2/themes </code> 中多了一个名为 <code> breeze </code>的目录，其中就存放了这个主题所需的文件。</p>
+<h1 id="修改配置文件"><a href="#修改配置文件" class="headerlink" title="修改配置文件"></a>修改配置文件</h1><p>用编辑器打开 <code>/etc/default/grub</code> 文件，需要更改三个部分</p>
+<ol>
+<li>将 <code> GRUB_TERMINAL_OUTPUT=”console” </code> 注释。也就是在该行前，加一个 “#”，变成 <code> #GRUB_TERMINAL_OUTPUT=”console” </code>。 如果你的配置文件中没有这句话，就忽略这一步</li>
+<li>修改 <code>GRUB_THEME</code>, 如果没有就添加上去，将其改为<code>GRUB_THEME=”/boot/grub2/themes/breeze/theme.txt”</code></li>
+<li>配置文件应该有一项是 <code> GRUB_TIMEOUT=5 </code>，其中 5 就代表开机时，grub2 的等待时间，具体的值根据需要修改</li>
+</ol>
+<p><strong>注意</strong>: 千万不要在等式两边加空格</p>
+<h1 id="应用"><a href="#应用" class="headerlink" title="应用"></a>应用</h1><p>执行命令</p>
+
+    <pre><code class="lang-bash">sudo grub2-mkconfig -o /boot/grub2/grub<span class="hljs-selector-class">.cfg</span>
+</code></pre>
+<p>执行完后，即可重启观看效果</p>
+<h1 id="安装其它主题"><a href="#安装其它主题" class="headerlink" title="安装其它主题"></a>安装其它主题</h1><p>安装其它主题也是类似额，如果没有提供 <code> install.sh </code>，一般是在 <code> /boot/grub2/themes </code>新建文件夹，存放主题的相关文件，然后也是同样的，修改<code> /etc/default/grub </code>文件，然后执行应用的命令。</p>
+<h1 id="最后再说一点"><a href="#最后再说一点" class="headerlink" title="最后再说一点"></a>最后再说一点</h1><p>今天突然看到 grub2 可以修改主题，感觉比较简单，就试了一下，一次成功了。<br>但是说实话，我在修改前还是有所顾虑的，因为美化主题这总事情，大部分情况下意义不大，而且如果设计到修改系统文件，那么因修改失败而带来的风险也是有的。我之前的系统就是因为想修改启动动画而意外的搞崩了系统。<br>所以，如果没什么必要，美化主题的事还是量力而为比较好。</p>
+]]></content>
+    
+    <summary type="html">
+    
+      &lt;h1 id=&quot;备份&quot;&gt;&lt;a href=&quot;#备份&quot; class=&quot;headerlink&quot; title=&quot;备份&quot;&gt;&lt;/a&gt;备份&lt;/h1&gt;&lt;p&gt;已防万一，最好还是先做好备份:&lt;/p&gt;
+
+    &lt;pre&gt;&lt;code class=&quot;lang-bash&quot;&gt;&lt;span class=&quot;hlj
+    
+    </summary>
+    
+      <category term="Operating System" scheme="https://lazzzis.github.io/hexo-theme-only/categories/Operating-System/"/>
+    
+    
+      <category term="Linux" scheme="https://lazzzis.github.io/hexo-theme-only/tags/Linux/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>这一年就这样过去了</title>
+    <link href="https://lazzzis.github.io/hexo-theme-only/2015/12/24/goodbye-2015/"/>
+    <id>https://lazzzis.github.io/hexo-theme-only/2015/12/24/goodbye-2015/</id>
+    <published>2015-12-24T09:04:32.000Z</published>
+    <updated>2017-07-30T05:48:51.000Z</updated>
+    
+    <content type="html"><![CDATA[<h1 id="Merry-Xmas"><a href="#Merry-Xmas" class="headerlink" title="Merry Xmas"></a>Merry Xmas</h1><p><strong>Merry Xmas!</strong><br><br>圣诞节悄然而至，再过几天就是2016了。已经不止一次这么感叹了：时间过得太快，总感觉这一年就这么没了。<br><br>对于2015年，总想写下一点内容，毕竟有些事情一直释怀不下，可能说出来会好一点。<br><img src="https://c.hime.io/images/R9k6.jpg" alt="Pixiv Id 54204715"></p>
+<h1 id="ACM"><a href="#ACM" class="headerlink" title="ACM"></a>ACM</h1><p>  这或许是我今年最大的一个心结。今年 6 月份，我参加了省赛，拿了一个三等奖（铜牌）。这个奖虽然很一般，但对于我来说确实是给了我很大的鼓励, 因为我能在训练的第一年就拿奖感觉确实很幸运。比赛后，本想着和队友继续努力，试着参与区域赛。但出乎我意料的是，我的两个队友似乎已经“满足”了，队友 Z 本身是机械专业的，Z 对 编程相关的是已经逐渐失去兴趣，比赛后也几乎不来做题了。网络赛之后，Z也确实表态，不会再参加ACM。 而另一个队友 C, C 对 参与区域赛的事刚开始也是支持，在参加网络赛时也很积极。但在之后，也就是最近是几个月，已经很少出现了。不知道是不是真的巧合，每次叫 C 来参加 bestcoder 和 codeforces 的时候，C 总有理由推脱。至于网络赛的结果，并不理想，实力还是差太多了。现在的状况就是，现在的队伍几乎只有我一个人是在继续学习的。<br><br>  <img src="https://c.hime.io/images/d20M.png" alt=""><br>  这是队伍的事，再加上我所在的学校本来就不重视这项竞赛。大部分有能力参加 ACM 的学生，被招去了参加学校更重视，获奖率更高的数模等竞赛。然后是教练的问题，现在的教练只是一个负责老师，只负责事情，不教学，而且有时连报名的事都没有负责好。我也在想方设法换一个教练，但问题又是，谁来呢？做得好的老师也去了数模等竞赛。某种意义上，已经陷入一种恶性循环。这几年，我所在学校的 ACM 队伍并没有取得好成绩，去年没拿奖，今年最好的也就是铜奖。照目前的状况，就算明年获奖，下一界又有谁来呢？ 包括连我自己有时候都在灰心。<br><br>  但如果单纯地看，抛开学校方面的话，我对我自己还是有一点信心的，毕竟自己已经坚持了这么久，如果不再拿一个更好的奖，那就感觉太对不起自己了。<br><br>  <img src="https://c.hime.io/images/kaqA.png" alt=""></p>
+<h1 id="Samfree"><a href="#Samfree" class="headerlink" title="Samfree"></a>Samfree</h1><p>想起 Samfree 的离去，至今还有点感伤。而从他的离去到现在刚好是 3 个月. <img src="https://c.hime.io/images/83an.png" alt=""><br>毕竟 Samfree 是早期就开始编写 V+ 歌曲的人，这几年也挺了不少他写的歌。而他的离去，总觉得有点“天妒英才”。如果 Samfree 继续留在世上，觉得能继续创作更多更美的曲子。可惜，这一切已经成为“如果”。<br><strong>R.I.P</strong></p>
+<p><center><script type="text/javascript" src="http://ext.nicovideo.jp/thumb_watch/sm1961633"></script></center></p>
+<h1 id="2016"><a href="#2016" class="headerlink" title="2016"></a>2016</h1><p>现在已经大三了，明年这时候应该已经在准备毕业的事了。准确的说，明年是我在大学的最后一年，最后的半年估计忙着其它事了。至少目前来说，我并没有想好毕业后要做什么，工作，考研，出国？无论哪一个选择，都有好处和坏处，而我现在就是分不清，哪一条路对我是最好的。</p>
+<h1 id="Smile"><a href="#Smile" class="headerlink" title="Smile"></a>Smile</h1><p>在后半年里，自己考虑（担心）的事情多了一些，大概是因为感觉自己的能力和自己的期望差距太大了，除了上面所提的 ACM 外，自己的英文水平也是一个问题。在翻墙前没有感觉，但在翻墙后发现太多的一手资料是用英文写的了！这个没办法，只能下决心补了。<br><br>说到底，自己的能力还有太多的不足，这一年就这样留下了一些遗憾，但一定要在新的一年里加油哦！<br><img src="https://c.hime.io/images/AgQN.jpg" alt="凉宫春日的忧郁"></p>
+]]></content>
+    
+    <summary type="html">
+    
+      &lt;h1 id=&quot;Merry-Xmas&quot;&gt;&lt;a href=&quot;#Merry-Xmas&quot; class=&quot;headerlink&quot; title=&quot;Merry Xmas&quot;&gt;&lt;/a&gt;Merry Xmas&lt;/h1&gt;&lt;p&gt;&lt;strong&gt;Merry Xmas!&lt;/strong&gt;&lt;br&gt;&lt;br&gt;圣诞
+    
+    </summary>
+    
+    
+  </entry>
+  
+</feed>
