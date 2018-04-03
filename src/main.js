@@ -4,7 +4,7 @@ import Vue from 'vue'
 import App from './App'
 import router from './router'
 import store from './store'
-import moment from 'moment'
+import fecha from 'fecha'
 import Page from '@/views/Page'
 import NotFound from '@/views/NotFound'
 import axios from 'axios'
@@ -33,7 +33,7 @@ axios.interceptors.response.use(function (response) {
 Vue.config.productionTip = false
 
 Vue.filter('timePretty', function (date) {
-  return moment(date).format('YYYY - MM - DD')
+  return fecha.format(new Date(date), 'YYYY - MM - DD')
 })
 
 Promise.all([
