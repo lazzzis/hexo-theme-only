@@ -11,7 +11,19 @@
   <div id="app"></div>
   <script src="https://unpkg.com/docute@3/dist/docute.js"></script>
   <script>
-    docute.init()
+    docute.init({
+      url: '.',
+      toc: `
+- [安装](/setup)
+- [基本设置](/setting)
+- [动画效果](/animated)
+- [评论迁移](/migrate_comments)
+- [自定义 404 页面](/customize_404)
+- [faq](/faq)
+- [开发](/dev)
+- [English](/english/)
+        `
+    })
   </script>
 </body>
 </html>
