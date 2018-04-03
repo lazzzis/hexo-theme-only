@@ -8,19 +8,19 @@
       >最开始的地方吧</router-link> </p>
       <img src="https://as.bitinn.net/upload/cite0l5z200oiz35nbv8t5xox.1200.jpg" alt="">
     </only-container>
-    <only-post v-else :slug="themeCfg.Page404" />
+    <only-page v-else title="page404" />
   </div>
 </template>
 
 <script>
 import Container from '@/components/Container'
-import Post from '@/views/Post'
+import Page from '@/views/Page'
 import { mapGetters } from 'vuex'
 
 export default {
   components: {
     'only-container': Container,
-    'only-post': Post
+    'only-page': Page
   },
   computed: {
     ...mapGetters(['themeCfg'])
