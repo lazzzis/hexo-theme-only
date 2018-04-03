@@ -24,7 +24,7 @@ import { disqusUrl } from '@/helper'
 import Vue from 'vue'
 
 export default {
-  props: [ 'title' ],
+  props: [ 'layout' ],
   data () {
     return {
       loading: true,
@@ -33,7 +33,7 @@ export default {
   },
   created () {
     this.loading = true
-    this.refresh(this.title)
+    this.refresh(this.layout)
       .then(() => {
         this.loading = false
       })
@@ -56,10 +56,12 @@ export default {
   },
   methods: {
     ...mapActions([ 'fetchPage' ]),
-    refresh (title) {
+    refresh (layout) {
       this.notExisted = false
-      document.title = `${title} | ${this.siteCfg.title}`
-      return this.fetchPage({ title: title })
+      return this.fetchPage({ layout })
+        .then(() => {
+          document.title = `${this.page.title} | ${this.siteCfg.title}`
+        })
         .catch((err) => {
           if (err.response && err.response.status === 404) {
             this.notExisted = true
@@ -68,7 +70,7 @@ export default {
     }
   },
   watch: {
-    'title' (to, from) {
+    'layout' (to, from) {
       this.loading = true
       this.refresh(to)
         .then(() => {

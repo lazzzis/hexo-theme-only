@@ -1,6 +1,6 @@
 <template lang="html">
   <div>
-    <only-container v-if="themeCfg.Page404 == null">
+    <only-container v-if="themeCfg.page404 == null">
       <h1>404 Not Found</h1>
       <h3> 迷路了么？这里什么也不存在 </h3>
       <p> 回到 <router-link
@@ -8,7 +8,7 @@
       >最开始的地方吧</router-link> </p>
       <img src="https://as.bitinn.net/upload/cite0l5z200oiz35nbv8t5xox.1200.jpg" alt="">
     </only-container>
-    <only-page v-else title="page404" />
+    <only-page v-else layout="page404" />
   </div>
 </template>
 

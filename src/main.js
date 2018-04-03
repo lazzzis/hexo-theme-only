@@ -60,7 +60,7 @@ Promise.all([
       path: item.link,
       component: Page,
       props: {
-        title: item.title
+        layout: item.layout
       }
     })))
   router.addRoutes(store.state.themeCfg.Drawer
@@ -69,7 +69,7 @@ Promise.all([
       path: item.link,
       component: Page,
       props: {
-        title: item.title
+        layout: item.layout
       }
     })))
 

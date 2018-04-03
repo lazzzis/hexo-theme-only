@@ -98,8 +98,8 @@ const actions = {
       })
     })
   },
-  fetchPage ({commit}, {title}) {
-    return http.get(`api/page/${title}.json`)
+  fetchPage ({commit}, {layout}) {
+    return http.get(`api/page/${layout}.json`)
       .then(({data}) => {
         commit('updatePage', {
           page: data
