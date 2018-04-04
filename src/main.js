@@ -38,40 +38,14 @@ Vue.filter('timePretty', function (date) {
 
 Promise.all([
   store.dispatch('fetchSiteCfg'),
-  store.dispatch('fetchThemeCfg')
+  store.dispatch('fetchThemeCfg'),
+  store.dispatch('fetchPages')
 ]).then(() => {
-  store.state.themeCfg.Splash.forEach((item) => {
-    if (item.type === 'permalink') {
-      return
-    }
-    item.link =
-      window.root + (item.link.startsWith('/') ? item.link.slice(1) : item.link)
-  })
-  store.state.themeCfg.Drawer.forEach((item) => {
-    if (item.type === 'permalink') {
-      return
-    }
-    item.link =
-      window.root + (item.link.startsWith('/') ? item.link.slice(1) : item.link)
-  })
-  router.addRoutes(store.state.themeCfg.Splash
-    .filter((item) => item.type === 'page')
-    .map((item) => ({
-      path: item.link,
-      component: Page,
-      props: {
-        layout: item.layout
-      }
-    })))
-  router.addRoutes(store.state.themeCfg.Drawer
-    .filter((item) => item.type === 'page')
-    .map((item) => ({
-      path: item.link,
-      component: Page,
-      props: {
-        layout: item.layout
-      }
-    })))
+  router.addRoutes(store.getters.pages.map((item) => ({
+    path: window.root + (item.link.startsWith('/') ? item.link.slice(1) : item.link),
+    component: Page,
+    props: { layout: item.layout }
+  })))
 
   router.addRoutes([{
     name: 'NotFound',

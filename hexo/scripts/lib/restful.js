@@ -180,9 +180,7 @@ module.exports = function (cfg, themecfg, site) {
   } else {
     apiData.push({
       path: 'api/posts.json',
-      data: JSON.stringify(postlist.filter(function (post) {
-        return post.slug !== themecfg.Page404
-      }))
+      data: JSON.stringify(postlist)
     })
   }
 
@@ -224,7 +222,7 @@ module.exports = function (cfg, themecfg, site) {
 
   if (restful.page) {
     apiData = apiData.concat(pages.map(function (page) {
-      var path = 'api/page/' + page.title + '.json'
+      var path = 'api/page/' + page.layout + '.json'
       return {
         path: path,
         data: JSON.stringify({
@@ -245,6 +243,28 @@ module.exports = function (cfg, themecfg, site) {
       }
     }))
   }
+
+  const pageMaps = {}
+  if (themecfg && themecfg.Splash) {
+    themecfg.Splash
+      .filter((item) => item.type === 'page')
+      .forEach((item) => {
+        pageMaps[item.link] = item
+      })
+  }
+
+  if (themecfg && themecfg.Drawer) {
+    themecfg.Drawer
+      .filter((item) => item.type === 'page')
+      .forEach((item) => {
+        pageMaps[item.link] = item
+      })
+  }
+
+  apiData.push({
+    path: 'api/pages.json',
+    data: JSON.stringify(Object.values(pageMaps))
+  })
 
   return apiData
 }
