@@ -9,9 +9,10 @@ const state = {
   siteCfg: null,
   article: {},
   page: {},
+  pages: [],
   post: null,
   posts: [],
-  tags: null,
+  tags: [],
   status: 200 // http status code
 }
 
@@ -24,6 +25,9 @@ const getters = {
   },
   article (state) {
     return state.article
+  },
+  pages (state) {
+    return state.pages
   },
   page (state) {
     return state.page
@@ -51,6 +55,9 @@ const mutations = {
   },
   updateArticle (state, {article}) {
     state.article = article
+  },
+  updatePages (state, {pages}) {
+    state.pages = pages
   },
   updatePage (state, {page}) {
     state.page = page
@@ -103,6 +110,14 @@ const actions = {
       .then(({data}) => {
         commit('updatePage', {
           page: data
+        })
+      })
+  },
+  fetchPages ({commit}) {
+    return http.get(`api/pages.json`)
+      .then(({data}) => {
+        commit('updatePages', {
+          pages: data
         })
       })
   },

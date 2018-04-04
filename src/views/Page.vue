@@ -34,9 +34,7 @@ export default {
   created () {
     this.loading = true
     this.refresh(this.layout)
-      .then(() => {
-        this.loading = false
-      })
+      .then(() => { this.loading = false })
   },
   components: {
     'only-article': ArticleItem,
@@ -73,9 +71,8 @@ export default {
     'layout' (to, from) {
       this.loading = true
       this.refresh(to)
+        .then(() => { this.loading = false })
         .then(() => {
-          this.loading = false
-        }).then(() => {
           Vue.nextTick(() => {
             window.DISQUS.reset({
               reload: true,

@@ -25,9 +25,6 @@ export default {
   computed: {
     ...mapGetters(['themeCfg'])
   },
-  created () {
-    this.$store.commit('updateStatus', 404)
-  },
   watch: {
     '$route.path' (to, from) {
       this.$store.commit('updateStatus', 200)
