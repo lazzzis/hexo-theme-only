@@ -12,7 +12,9 @@ const state = {
   pages: [],
   post: null,
   posts: [],
-  tags: [],
+  tags: null, // can not be empty array
+  // (empty array represents no tags at all)
+  // (null means tags.json have not been fetched)
   status: 200 // http status code
 }
 
