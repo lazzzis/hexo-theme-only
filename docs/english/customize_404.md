@@ -1,22 +1,13 @@
 # Customize 404 Page
 
-Create a new post, which you can name anything, like `404`, `not-found`. An example:
-
-```bash
-$ hexo new "not-found"
-```
-
-The terminal would prompt that `not-found.md` is created. Copy the filename (without `.md` extension), and then insert a new record on the config file `_config.yml` of the theme:
-
-```yml
-Page404: not-found
-```
+Create a new markdown file under source directory, which you can name anything, like `404.md`, `not-found.md`. Append `layout: page404` in the `front-matter`.
 
 The 404 page will show like a post. Therefore, the content of the `not-found.md` is just the content of your 404 page, such as
 
-```
+```yaml
 ---
 title: not-found
+layout: page404 # can not be omitted
 date: 2018-03-24 14:31:52
 comments: false
 ---

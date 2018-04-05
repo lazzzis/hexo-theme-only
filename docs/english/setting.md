@@ -52,14 +52,23 @@ generally corresponds to links other than your blog, such as
 -
     title: About
     type: page
-    link: /about
+    layout: about
+    link: /about-me
 ```
 
-Let's say you would like a new page with the url `/about`. Then create a file with the command `hexo init about`. Move this file to upper level directory; that is move it from `source/_posts/about.md` to `source/about`.
+Let's say you would like a new page with the url `/about-me`. Then create a file, which you can name anything, like `about-me.md` or `About.md`, under `source` folder.
 
-**Note:** the `title` in [`front-matter`](https://hexo.io/docs/front-matter.html) must be same as the `title` in `_config.yml`.
+The `front-matter` of this file must contain a `layout`, whose value is same with the one in `_config.yml`, like:
 
-You can set `link` as arbitrary, as long as it does not conflict with previous links.
+```yml
+title: Title can be arbitrary
+layout: about # can not be omitted and must be same with `layout` in `_config.yml`
+---
+
+Writing anything you like
+```
+
+You can set `link` as arbitrary, as long as it does not conflict with previous links. But `layout` must be identical and does not conflict with other files.
 
 ## disqus_shortname
 

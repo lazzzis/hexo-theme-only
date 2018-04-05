@@ -8,12 +8,12 @@ Splash:
     -
         title: Twitter
         type: permalink
-        link: https://twitter.com #/lazzzis
+        link: https://twitter.com
         _blank: true
     -
         title: Github
         type: permalink
-        link: https://github.com #/lazzzis
+        link: https://github.com
         _blank: true
     -
         title: Rss
@@ -38,10 +38,12 @@ Drawer:
     #     title: Links
     #     type: page
     #     link: /links
+    #     layout: links
     # -
     #     title: About
     #     type: page
     #     link: /about
+    #     layout: about
 
 # disqus_shortname: demo
 # livere_uid: demo
@@ -53,4 +55,5 @@ animated:
     tags: bounceInUp
 
 # customize 404 page
-# Page404: not-found
+# set false to show default 404 page
+page404: true
