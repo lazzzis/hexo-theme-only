@@ -1,3 +1,5 @@
+此文档是为 2.x 版本定制的文档。1.x 相关文档已经转移至 [link](https://github.com/lazzzis/hexo-theme-only/tree/gh-pages/docs)
+
 # 文档
 
 如同 [hexo-theme-one](https://github.com/EYHN/hexo-theme-one/blob/master/docs/README.md) 一样，这个主题也部分重写了 hexo 的一些功能

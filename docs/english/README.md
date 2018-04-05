@@ -1,3 +1,5 @@
+These documents are specifically for v2.x. If you are looking for documents of v1.x, visiting [here](https://github.com/lazzzis/hexo-theme-only/tree/gh-pages/docs)
+
 # Documents
 
 Like `hexo-theme-one`, this theme also rewrites some functions of `hexo`.
