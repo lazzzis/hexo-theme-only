@@ -18,6 +18,11 @@ import Page from '@/views/Page'
 import { mapGetters } from 'vuex'
 
 export default {
+  created () {
+    if (this.$route.query.redirect) {
+      this.$router.push(this.$route.query.redirect)
+    }
+  },
   components: {
     'only-container': Container,
     'only-page': Page
