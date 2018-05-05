@@ -20,7 +20,7 @@ import { mapGetters } from 'vuex'
 export default {
   created () {
     if (this.$route.query.redirect) {
-      this.$router.push(this.$route.query.redirect)
+      this.$router.replace(this.$route.query.redirect)
     }
   },
   components: {

@@ -1,5 +1,6 @@
 import Vue from 'vue'
 import Vuex from 'vuex'
+import urlJoin from 'url-join'
 import http from '@/api'
 
 Vue.use(Vuex)
@@ -88,6 +89,16 @@ const actions = {
   fetchThemeCfg ({commit}) {
     return http.get('api/theme.json')
       .then(({data}) => {
+        data.Drawer
+          .filter((item) => item.type === 'sitelink' || item.type === 'page')
+          .forEach((item) => {
+            item.link = urlJoin(window.root, item.link)
+          })
+        data.Splash
+          .filter((item) => item.type === 'sitelink' || item.type === 'page')
+          .forEach((item) => {
+            item.link = urlJoin(window.root, item.link)
+          })
         commit('updateThemeCfg', data)
       })
   },
@@ -118,6 +129,10 @@ const actions = {
   fetchPages ({commit}) {
     return http.get(`api/pages.json`)
       .then(({data}) => {
+        data = data.map((item) => ({
+          ...item,
+          link: urlJoin(window.root, item.link)
+        }))
         commit('updatePages', {
           pages: data
         })

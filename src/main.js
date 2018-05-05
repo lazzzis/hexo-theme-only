@@ -42,7 +42,7 @@ Promise.all([
   store.dispatch('fetchPages')
 ]).then(() => {
   router.addRoutes(store.getters.pages.map((item) => ({
-    path: window.root + (item.link.startsWith('/') ? item.link.slice(1) : item.link),
+    path: item.link,
     component: Page,
     props: { layout: item.layout }
   })))
