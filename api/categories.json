@@ -1,1 +1,1 @@
-[{"name":"ACM","path":"api/categories/ACM.json"},{"name":"TOEFL","path":"api/categories/TOEFL.json"},{"name":"GRE","path":"api/categories/GRE.json"},{"name":"Operating System","path":"api/categories/Operating System.json"},{"name":"Front-end","path":"api/categories/Front-end.json"},{"name":"Math","path":"api/categories/Math.json"},{"name":"kny","path":"api/categories/kny.json"}]
+[{"name":"Foo","path":"api/categories/Foo.json"},{"name":"Bar","path":"api/categories/Bar.json"},{"name":"Baz","path":"api/categories/Baz.json"}]
